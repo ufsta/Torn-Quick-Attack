@@ -1,0 +1,2806 @@
+// ==UserScript==
+// @name         Ufstas Quick Attack With FF
+// @namespace    http://tampermonkey.net/
+// @version      50.5
+// @description  FF Scouter Battle Stats + Colored FF Boxes + Profile Page Stats + Flight Countdown + Spy Import + Custom Color/FF Ranges + Gauges
+// @match        https://www.torn.com/*
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_xmlhttpRequest
+// @connect      ffscouter.com
+// @connect      tornstats.com
+// @connect      yata.yt
+// @connect      api.torn.com
+// @run-at       document-end
+// @license      MIT
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    function getTornKey() {
+    return (GM_getValue('tornApiKey', '') || '').trim();
+}
+
+    // Helper to dismiss mobile keyboard before navigation
+    function dismissKeyboard() {
+        if (document.activeElement && typeof document.activeElement.blur === 'function') {
+            document.activeElement.blur();
+        }
+    }
+
+    // Auto-dismiss keyboard if attack page tries to focus an input on load
+    if (window.location.href.includes("sid=attack")) {
+        setTimeout(() => {
+            if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) {
+                document.activeElement.blur();
+            }
+        }, 200);
+    }
+
+    // Inject CSS rules for hiding logos, filter box styling, column badges/headers, gauges, and PREMIUM SETTINGS UI
+    const style = document.createElement('style');
+    style.textContent = `
+        /* Hide faction logo links/images in list rows - EXCEPT ON ATTACK LOGS, FORUMS, WARFARE, HOF FACTION TABS, AND MINI-PROFILES */
+        body:not(.qa-attack-log):not(.qa-forum):not(.qa-warfare):not(.qa-hof-faction) .table-row a[href*="factions.php"]:has(img):not(#react-profile-mini-root *):not([class*="mini-profile"] *),
+        body:not(.qa-attack-log):not(.qa-forum):not(.qa-warfare):not(.qa-hof-faction) .t-row a[href*="factions.php"]:has(img):not(#react-profile-mini-root *):not([class*="mini-profile"] *),
+        body:not(.qa-attack-log):not(.qa-forum):not(.qa-warfare):not(.qa-hof-faction) tr a[href*="factions.php"]:has(img):not(#react-profile-mini-root *):not([class*="mini-profile"] *),
+        body:not(.qa-attack-log):not(.qa-forum):not(.qa-warfare):not(.qa-hof-faction) li a[href*="factions.php"]:has(img):not(#react-profile-mini-root *):not([class*="mini-profile"] *),
+        body:not(.qa-attack-log):not(.qa-forum):not(.qa-warfare):not(.qa-hof-faction) [class*="member"] a[href*="factions.php"]:has(img):not(#react-profile-mini-root *):not([class*="mini-profile"] *),
+        body:not(.qa-attack-log):not(.qa-forum):not(.qa-warfare):not(.qa-hof-faction) [class*="user"] a[href*="factions.php"]:has(img):not(#react-profile-mini-root *):not([class*="mini-profile"] *),
+        body:not(.qa-attack-log):not(.qa-forum):not(.qa-warfare):not(.qa-hof-faction) [class*="row"] a[href*="factions.php"]:has(img):not(#react-profile-mini-root *):not([class*="mini-profile"] *),
+        body:not(.qa-attack-log):not(.qa-forum):not(.qa-warfare):not(.qa-hof-faction) img[src*="factiontags"]:not(#react-profile-mini-root *):not([class*="mini-profile"] *),
+        body:not(.qa-attack-log):not(.qa-forum):not(.qa-warfare):not(.qa-hof-faction) img[src*="/factions/"]:not(#react-profile-mini-root *):not([class*="mini-profile"] *) {
+            display: none !important;
+        }
+
+        /* Ranked War: Hide Native Score Column & Script FF Column */
+        .faction-war .score,
+        .faction-war-list .score,
+        #faction_war_list_id .score,
+        .faction-war .qa-col-header,
+        .faction-war .qa-col-cell,
+        #faction_war_list_id .qa-col-header,
+        #faction_war_list_id .qa-col-cell {
+            display: none !important;
+        }
+
+/* Filter Box Styles */
+.qa-filter-box {
+    background: #1f1c27; border: 1px solid #4b3f8f; border-radius: 8px;
+    padding: 0; margin-bottom: 16px; color: #ccc;
+    font-family: Arial, sans-serif; font-size: 12px; overflow: hidden;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.45);
+}
+.qa-filter-box summary {
+    cursor: pointer; outline: none; user-select: none; list-style: none;
+    font-size: 14px; font-weight: bold; color: #fff;
+    background:
+        repeating-linear-gradient(45deg, rgba(255,255,255,0.035) 0 2px, transparent 2px 4px),
+        linear-gradient(180deg, #6a4fe0 0%, #4a35b8 50%, #33238a 100%);
+    border-bottom: 2px solid #d4af37;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.25);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+    letter-spacing: 0.4px;
+}
+.qa-filter-box summary::-webkit-details-marker { display: none; }
+.qa-filter-header-content {
+    display: flex; justify-content: space-between; align-items: center;
+    width: 100%; box-sizing: border-box; padding: 10px 14px 6px;
+}
+.qa-filter-header-content > span:first-child::before {
+    content: "▾"; display: inline-block; margin-right: 8px; color: #d4af37; transition: transform .2s;
+}
+.qa-filter-box:not([open]) .qa-filter-header-content > span:first-child::before { transform: rotate(-90deg); }
+.qa-filter-header-actions { display: flex; gap: 6px; align-items: center; }
+.qa-action-btn {
+    background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.22); border-radius: 4px; color: #fff;
+    cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; padding: 0; transition: background-color .2s;
+}
+.qa-action-btn:hover { background: rgba(255,255,255,0.2); }
+.qa-filter-grid { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 28px; padding: 14px 16px 16px; }
+.qa-filter-split { display: flex; flex-wrap: wrap; gap: 12px 28px; }
+.qa-filter-group { display: flex; flex-direction: column; gap: 4px; }
+.qa-filter-group strong { color: #fff; margin-bottom: 2px; }
+.qa-filter-options label { display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; margin-bottom: 2px; }
+.qa-range-inputs { display: flex; align-items: center; gap: 4px; }
+.qa-range-inputs input { width: 55px; padding: 4px; border: 1px solid #444; border-radius: 4px; background: #111; color: #fff; font-size: 11px; text-align: center; }
+.qa-select { padding: 4px; border: 1px solid #444; border-radius: 4px; background: #111; color: #fff; font-size: 11px; cursor: pointer; width: 100%; }
+.qa-btn-sort {
+    padding: 6px 10px; border: 1px solid #444; border-radius: 4px; background: #383838;
+    color: #fff; font-size: 12px; cursor: pointer; text-align: center; width: 100%;
+    font-weight: bold; margin-bottom: 4px;
+}
+.qa-btn-sort:hover { background: #555; }
+.qa-preset-bar { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 14px 10px; margin: 0; }
+.qa-preset-chip {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 3px 10px;
+    border: 1px solid #444; border-radius: 12px; background: #383838; color: #ccc;
+    font-size: 11px; font-weight: bold; cursor: pointer; user-select: none;
+    text-shadow: none; transition: background-color .2s;
+}
+.qa-preset-chip:hover { background: #555; color: #fff; }
+.qa-preset-chip.qa-on { background: linear-gradient(180deg, #e6c453, #c49a22); border-color: #d4af37; color: #1a1500; }
+.qa-preset-chip.qa-add { border-style: dashed; color: #9ab; }
+.qa-preset-x { opacity: .6; font-size: 13px; line-height: 1; flex-shrink: 0; }
+.qa-preset-x:hover { opacity: 1; color: #ff5e6c; }
+
+/* War page: respect column replaces the Attack cell */
+.qa-resp-host { font-size: 0 !important; }
+.qa-resp-host *:not(.qa-resp) { display: none !important; }
+.qa-resp-host a[href*="sid=attack"] { display: none !important; }
+.qa-resp {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 42px; height: 20px; padding: 0 6px; box-sizing: border-box;
+    border-radius: 3px; font-size: 11px; font-weight: bold; cursor: pointer;
+    background: #444; color: #fff;
+}
+/* Hospital timers */
+.members-list div.status[data-qa-hosp] { position: relative !important; color: transparent !important; }
+.members-list div.status[data-qa-hosp]:after {
+    content: var(--qa-content); position: absolute; top: 0; left: 0;
+    width: calc(100% - 10px); height: 100%; background: inherit;
+    display: flex; justify-content: flex-end; align-items: center; white-space: nowrap;
+    color: var(--user-status-red-color, #e45c5c);
+}
+.members-list div.status[data-qa-hosp="soon"]:after { color: #69eb69; }
+        /* Column Header & Data Cell Styling */
+        .qa-col-header {
+            display: inline-flex !important; align-items: center !important; justify-content: center !important;
+            width: 38px !important; font-weight: bold !important; font-size: 12px !important; color: #fff !important;
+            text-align: center !important; vertical-align: middle !important; margin: 0 4px !important; height: 100% !important;
+            cursor: pointer !important; user-select: none !important;
+        }
+        .qa-col-header:hover { color: #ff4747 !important; }
+        .qa-col-cell {
+            cursor: pointer !important; font-weight: bold !important; font-size: 11px !important; text-align: center !important;
+            border-radius: 3px !important; padding: 0 6px !important; line-height: 20px !important; height: 20px !important;
+            box-sizing: border-box !important; display: inline-flex !important; align-items: center !important; justify-content: center !important;
+            margin: 0 4px !important; vertical-align: middle !important;
+        }
+        [data-qa-hidden="true"] { display: none !important; }
+
+        /* Force show logos on Faction Warfare page only */
+body.qa-warfare a[href*="factions.php"], body.qa-warfare img[src*="factiontags"], body.qa-warfare img[src*="/factions/"] { display: inline-block !important; }
+
+        /* Swatches and Gauges */
+        .qa-swatch-row { display: flex; gap: 4px; margin-top: 6px; margin-bottom: 10px; }
+        .qa-swatch { width: 20px; height: 13px; display: inline-block; }
+        .qa-gauge { position: relative; overflow: visible !important; }
+        .qa-marker-wrapper {
+            position: absolute; display: inline-block; pointer-events: none; line-height: 0;
+            top: 0; left: calc(var(--band-percent, 50%)); transform: translate(-50%, -30%); z-index: 10;
+        }
+        .qa-arrow { width: 20px; height: 13px; display: block; object-fit: cover; }
+
+        /* --- OVERLAY & MODAL STYLES --- */
+        .qa-settings-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(0, 0, 0, 0.75);
+            backdrop-filter: blur(3px);
+            z-index: 999999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease-in-out;
+        }
+        .qa-settings-overlay.qa-active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .qa-settings-modal {
+            max-width: 500px;
+            width: 90%;
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.8);
+            background: #181818;
+            border: 1px solid #333;
+            border-radius: 8px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        /* Sticky Header */
+        .qa-modal-header {
+            flex-shrink: 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            font-weight: 700;
+            font-size: 15px;
+            color: #fff;
+            background: #1f1f1f;
+            border-bottom: 1px solid #2a2a2a;
+            border-radius: 8px 8px 0 0;
+        }
+        .qa-close-btn {
+            cursor: pointer;
+            color: #777;
+            font-size: 24px;
+            line-height: 1;
+            font-weight: bold;
+            transition: color 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .qa-close-btn:hover { color: #fff; }
+
+        /* Scrollable Content Body */
+        .qa-premium-content {
+            overflow-y: auto;
+            padding: 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        /* Collapsible Cards (Details/Summary) */
+        .qa-premium-card {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 6px;
+            padding: 16px;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
+            transition: background 0.2s;
+        }
+        .qa-premium-card summary {
+            margin: 0;
+            color: #fff;
+            font-size: 13px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            cursor: pointer;
+            user-select: none;
+            list-style: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            outline: none;
+        }
+        .qa-premium-card summary::-webkit-details-marker {
+            display: none;
+        }
+        .qa-premium-card summary::after {
+            content: "▼";
+            font-size: 10px;
+            color: #777;
+            transition: transform 0.2s ease;
+        }
+        .qa-premium-card[open] summary::after {
+            transform: rotate(180deg);
+        }
+        .qa-premium-card[open] summary {
+            border-bottom: 1px solid #333;
+            padding-bottom: 12px;
+            margin-bottom: 14px;
+        }
+
+        .qa-premium-input-group { margin-bottom: 14px; }
+        .qa-premium-input-group:last-child { margin-bottom: 0; }
+        .qa-premium-input-group label {
+            display: block; font-size: 12px; margin-bottom: 6px; font-weight: 500; color: #bbb;
+        }
+        .qa-premium-input, .qa-premium-select {
+            width: 100%; max-width: 360px; padding: 8px 12px; border-radius: 4px;
+            border: 1px solid #444; background: #0a0a0a; color: #fff; font-size: 13px;
+            transition: all 0.2s; box-sizing: border-box;
+        }
+        .qa-premium-input:focus, .qa-premium-select:focus {
+            outline: none; border-color: #58a6ff; box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.25);
+        }
+        .qa-premium-btn {
+            padding: 7px 14px; border-radius: 4px; font-size: 12px; font-weight: 600;
+            cursor: pointer; transition: all 0.2s; border: 1px solid transparent;
+            display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+        }
+        .qa-premium-btn-secondary { background: #333; color: #e0e0e0; border-color: #444; }
+        .qa-premium-btn-secondary:hover { background: #444; color: #fff; border-color: #555; }
+        .qa-premium-btn-danger { background: rgba(215, 58, 73, 0.1); color: #ff5e6c; border-color: rgba(215, 58, 73, 0.4); }
+        .qa-premium-btn-danger:hover { background: rgba(215, 58, 73, 0.2); color: #ff7682; }
+        .qa-premium-btn-primary { background: #238636; color: #fff; border-color: rgba(240, 246, 252, 0.1); padding: 8px 20px; font-size: 13px; }
+        .qa-premium-btn-primary:hover { background: #2ea043; }
+        .qa-toggle {
+            display: inline-flex; align-items: center; cursor: pointer; gap: 10px;
+            font-size: 13px; color: #ccc; margin-bottom: 8px; user-select: none; transition: color 0.2s;
+        }
+        .qa-toggle:hover { color: #fff; }
+        .qa-toggle input { display: none; }
+        .qa-toggle-slider {
+            width: 36px; height: 20px; background: #444; border-radius: 20px;
+            position: relative; transition: 0.3s; flex-shrink: 0; border: 1px solid #555;
+        }
+        .qa-toggle-slider::after {
+            content: ''; position: absolute; width: 14px; height: 14px; background: #fff;
+            border-radius: 50%; top: 2px; left: 2px; transition: 0.3s; box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+        .qa-toggle input:checked + .qa-toggle-slider { background: #58a6ff; border-color: #58a6ff; }
+        .qa-toggle input:checked + .qa-toggle-slider::after { transform: translateX(16px); }
+        .qa-grid-layout { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px 16px; }
+        .qa-badge-premium { padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+    `.replace(/[\u00A0\u2000-\u200B]/g, ' ');
+    (document.head || document.documentElement).appendChild(style);
+
+    const getSetting = (key, defaultVal = true) => GM_getValue(key, defaultVal);
+const FILTER_DEFAULTS = {
+    sortBy: 'none', lvlMin: '', lvlMax: '', ffMin: '', ffMax: '', statsMin: '', statsMax: '',
+    actOnline: true, actIdle: true, actOffline: true,
+    stOkay: true, stHsp: true, stJail: true, stTravel: true, stAbroad: true
+};
+
+// Anything you leave out falls back to FILTER_DEFAULTS. Edit or add your own here.
+const BUILTIN_FILTER_PRESETS = {
+    'Online & Okay': {
+        actIdle: false, actOffline: false,
+        stHsp: false, stJail: false, stTravel: false, stAbroad: false
+    },
+    'Easy targets': {
+        ffMax: '2.5', sortBy: 'ff-desc',
+        stHsp: false, stJail: false, stTravel: false, stAbroad: false
+    },
+    'Juicy (FF 3-4.5)': {
+        ffMin: '3', ffMax: '4.5', sortBy: 'ff-desc',
+        stHsp: false, stJail: false, stTravel: false, stAbroad: false
+    }
+};
+
+    function isExcludedHofPage(url) {
+        const u = (url || window.location.href).toLowerCase();
+        return (u.includes("sid=hof") || u.includes("halloffame.php")) &&
+               (u.includes("type=factionrank") || u.includes("type=factionchains") || u.includes("type=factionrespect"));
+    }
+
+    // =========================================================================
+    // FF Scouter V2 Color Palettes
+    // =========================================================================
+    const BUILTIN_PALETTES = {
+        classic: ["#1734e8", "#1788e8", "#17dbe8", "#17e8a1", "#17e84e", "#34e817", "#88e817", "#dbe817", "#e8a117", "#e84e17", "#e81734"],
+        cool_diverging: ["#2166ac", "#2080a2", "#1f9497", "#1e8d75", "#1c8254", "#1b7837", "#2e8b1e", "#6c9e21", "#b1aa23", "#c47525", "#d73027"],
+        neon: ["#0c50ff", "#0cb1ff", "#0cffec", "#0cff8a", "#0cff29", "#50ff0c", "#b1ff0c", "#ffec0c", "#ff8a0c", "#ff290c", "#ff0c50"],
+        colorblind_safe: ["#440154", "#481a6c", "#472f7d", "#414487", "#39568c", "#2a788e", "#21908d", "#22a884", "#42be71", "#a8db34", "#fde725"],
+        grayscale: ["#f0f0f0", "#e0e0e0", "#cccccc", "#b3b3b3", "#999999", "#808080", "#666666", "#4d4d4d", "#333333", "#1a1a1a", "#000000"],
+        green_yellow_red: ["#73bf69", "#8ec55c", "#a9cb50", "#c4d243", "#dfd837", "#fade2a", "#f8c034", "#f7a23e", "#f58548", "#f46752", "#f2495c"],
+        blue_yellow_red: ["#1f60c4", "#4c7ebb", "#799db3", "#a5bbaa", "#d2daa2", "#fff899", "#f3cb83", "#e79e6d", "#dc7056", "#d04340", "#c4162a"],
+        plasma: ["#0d0887", "#41049d", "#6a00a8", "#8f0da4", "#b12a90", "#cc4778", "#e16462", "#f2844b", "#fca636", "#fcce25", "#f0f921"]
+    };
+
+    function badgeColorForFF(ffValue) {
+        if (ffValue == null || isNaN(ffValue)) return "#444444";
+
+        const scheme = getSetting('qaColorScheme', 'classic');
+        const palette = BUILTIN_PALETTES[scheme] || BUILTIN_PALETTES['classic'];
+
+        const low_ff = getSetting('qaFfRangeLow', 2);
+        const high_ff = getSetting('qaFfRangeHigh', 4);
+        const max_ff = getSetting('qaFfRangeMax', 8);
+
+        const low_mid_percent = 33;
+        const mid_high_percent = 66;
+
+        const ff_lower = Math.max(1, Math.min(ffValue, max_ff));
+        let percent;
+
+        if (ff_lower <= low_ff) {
+            percent = ((ff_lower - 1) / Math.max(0.01, low_ff - 1)) * low_mid_percent;
+        } else if (ff_lower <= high_ff) {
+            percent = ((ff_lower - low_ff) / Math.max(0.01, high_ff - low_ff)) * (mid_high_percent - low_mid_percent) + low_mid_percent;
+        } else {
+            percent = ((ff_lower - high_ff) / Math.max(0.01, max_ff - high_ff)) * (100 - mid_high_percent) + mid_high_percent;
+        }
+
+        const ratio = Math.max(0, Math.min(10, Math.floor((percent / 100) * 10)));
+        return palette[ratio] || "#444444";
+    }
+
+    function getContrastColor(hex) {
+        if (!hex || hex.length < 7) return "white";
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        const brightness = r * 0.299 + g * 0.587 + b * 0.114;
+        return brightness > 126 ? "black" : "white";
+    }
+
+    function formatDuration(totalSeconds) {
+        const clamped = Math.max(0, Math.floor(totalSeconds));
+        const hours = Math.floor(clamped / 3600);
+        const minutes = Math.floor((clamped % 3600) / 60);
+        const seconds = clamped % 60;
+        const parts = [];
+        if (hours > 0) parts.push(`${hours}h`);
+        if (hours > 0 || minutes > 0) parts.push(`${minutes}m`);
+        parts.push(`${seconds}s`);
+        return parts.join(' ');
+    }
+
+    function formatTCT(unixSeconds) {
+        if (!unixSeconds || isNaN(unixSeconds)) return '';
+        const d = new Date(unixSeconds * 1000);
+        const h = String(d.getUTCHours()).padStart(2, '0');
+        const m = String(d.getUTCMinutes()).padStart(2, '0');
+        return `${h}:${m}`;
+    }
+
+    function parseStatValue(str) {
+        if (!str) return null;
+        str = String(str).trim().toLowerCase();
+        const match = str.match(/^([\d.,]+)\s*([kmbt])?$/);
+        if (!match) return null;
+        let num = parseFloat(match[1].replace(/,/g, ''));
+        if (isNaN(num)) return null;
+        const suffix = match[2];
+        if (suffix === 'k') num *= 1e3;
+        else if (suffix === 'm') num *= 1e6;
+        else if (suffix === 'b') num *= 1e9;
+        else if (suffix === 't') num *= 1e12;
+        return num;
+    }
+
+    function getActivityStatus(row) {
+        const wrap = row.querySelector('[class*="userStatusWrap"], [class*="userStatus"], [class*="statusWrap"]');
+        if (wrap) {
+            const label = (wrap.getAttribute('aria-label') || '').toLowerCase();
+            if (label.includes('online')) return 'online';
+            if (label.includes('idle') || label.includes('away')) return 'idle';
+            if (label.includes('offline')) return 'offline';
+        }
+
+        const ariaEl = row.querySelector('[aria-label*="online" i], [aria-label*="offline" i], [aria-label*="idle" i]');
+        if (ariaEl) {
+            const label = ariaEl.getAttribute('aria-label').toLowerCase();
+            if (label.includes('online')) return 'online';
+            if (label.includes('idle') || label.includes('away')) return 'idle';
+            if (label.includes('offline')) return 'offline';
+        }
+
+        if (row.querySelector('.online, [class*="online___"], [class*="online-"], [class*="is-online"]')) return 'online';
+        if (row.querySelector('.idle, [class*="idle___"], [class*="idle-"], [class*="is-idle"]')) return 'idle';
+        if (row.querySelector('.offline, [class*="offline___"], [class*="offline-"], [class*="is-offline"]')) return 'offline';
+
+        return 'unknown';
+    }
+
+    function applyGauge(element, ffValue) {
+        if (!element || ffValue == null || isNaN(ffValue)) return;
+
+        const low_ff = getSetting('qaFfRangeLow', 2);
+        const high_ff = getSetting('qaFfRangeHigh', 4);
+        const max_ff = getSetting('qaFfRangeMax', 8);
+
+        const low_mid_percent = 33;
+        const mid_high_percent = 66;
+
+        const ff_lower = Math.max(1, Math.min(ffValue, max_ff));
+        let percent;
+
+        if (ff_lower <= low_ff) {
+            percent = ((ff_lower - 1) / Math.max(0.01, low_ff - 1)) * low_mid_percent;
+        } else if (ff_lower <= high_ff) {
+            percent = ((ff_lower - low_ff) / Math.max(0.01, high_ff - low_ff)) * (mid_high_percent - low_mid_percent) + low_mid_percent;
+        } else {
+            percent = ((ff_lower - high_ff) / Math.max(0.01, max_ff - high_ff)) * (100 - mid_high_percent) + mid_high_percent;
+        }
+
+        percent = Math.max(0, Math.min(100, percent));
+
+        element.classList.add('qa-gauge');
+        element.style.setProperty('--band-percent', `${percent}%`);
+
+        let wrapper = element.querySelector('.qa-marker-wrapper');
+        if (!wrapper) {
+            wrapper = document.createElement('div');
+            wrapper.className = 'qa-marker-wrapper';
+            element.appendChild(wrapper);
+        }
+
+        const color = badgeColorForFF(ffValue);
+        wrapper.innerHTML = `
+            <svg class="qa-arrow" viewBox="0 0 20 13">
+                <path fill-rule="evenodd" fill="${color}" stroke="#000000" stroke-width="1.5" d="M 0,0 H 13 20 L 10,12 Z"></path>
+            </svg>
+        `;
+    }
+
+    const CHAT_AND_NAV_IGNORE_SELECTOR = `
+        header, #header-root, #top-page-links-list, nav, #chatroot, [id*="chat"], [class*="chat"],
+        #sidebarroot, .info-msg-cont
+    `;
+
+    const PAGE_CONFIG = [
+        { id: 'tglMkt', label: 'Item Market / Bazaars', key: 'showMarket', check: url => url.includes("ItemMarket") || url.includes("imarket.php") },
+        { id: 'tglFac', label: 'Faction Page', key: 'showFaction', check: url => url.includes("factions.php") },
+        { id: 'tglSrch', label: 'User Search', key: 'showSearch', check: url => url.includes("sid=UserList") || url.includes("userlist") },
+        { id: 'tglBty', label: 'Bounties', key: 'showBounty', check: url => url.includes("bounties.php") },
+        { id: 'tglHof', label: 'Hall of Fame', key: 'showHoF', check: url => (url.includes("sid=hof") || url.includes("halloffame.php")) && !isExcludedHofPage(url) },
+        { id: 'tglLst', label: 'User Lists', key: 'showLists', check: url => url.includes("sid=list") || url.includes("type=enemy") || url.includes("type=friend") || url.includes("type=target") },
+        { id: 'tglFrm', label: 'Forums', key: 'showForum', check: url => url.includes("forums.php") },
+        { id: 'tglWar', label: 'War Page', key: 'showWar', check: url => url.includes("war.php") },
+        { id: 'tglHsp', label: 'Hospital', key: 'showHospital', check: url => url.includes("hospitalview.php") },
+        { id: 'tglAbr', label: 'Abroad People', key: 'showAbroad', check: url => url.includes("page=people") },
+        { id: 'tglCmp', label: 'Company Employees', key: 'showCompany', check: url => url.includes("joblist.php") },
+        { id: 'tglCpt', label: 'Competition', key: 'showCompetition', check: url => url.includes("competition.php") || url.includes("sid=competition") },
+        { id: 'tglPrp', label: 'Properties', key: 'showProperties', check: url => url.includes("properties.php") },
+        { id: 'tglPts', label: 'Points Market', key: 'showPoints', check: url => url.includes("pmarket.php") },
+        { id: 'tglRR',  label: 'Russian Roulette / Casino', key: 'showRR', check: url => url.toLowerCase().includes("russianroulette") || url.toLowerCase().includes("casino.php") }
+    ];
+
+    const statCache = {};
+    const spyCache = GM_getValue('qaSpyCache', {});
+    let pendingIDs = new Set();
+    let fetchTimeout = null;
+    let flightInterval = null;
+
+    function isSpyValid(timestamp) {
+        if (!timestamp) return false;
+        const thirtyDaysInSeconds = 30 * 24 * 60 * 60;
+        const currentSeconds = Math.floor(Date.now() / 1000);
+        return (currentSeconds - timestamp) <= thirtyDaysInSeconds;
+    }
+
+    function formatTBS(num) {
+        if (num >= 1e12) return +(num / 1e12).toFixed(2) + 't';
+        if (num >= 1e9) return +(num / 1e9).toFixed(2) + 'b';
+        if (num >= 100e6) return +(num / 1e6).toFixed(0) + 'm';
+        if (num >= 10e6) return +(num / 1e6).toFixed(1) + 'm';
+        if (num >= 1e6) return +(num / 1e6).toFixed(2) + 'm';
+        if (num >= 1e3) return +(num / 1e3).toFixed(0) + 'k';
+        return num.toString();
+    }
+
+    function getPlayerIdFromLink(link) {
+        if (!link) return null;
+        const href = typeof link === 'string' ? link : link.href;
+        if (!href) return null;
+
+        try {
+            const match = href.match(/(?:XID|userId|userID|user2ID|NID)=([0-9]+)/i);
+            if (match) return match[1];
+
+            const url = new URL(href, window.location.origin);
+            return url.searchParams.get("XID") ||
+                   url.searchParams.get("userId") ||
+                   url.searchParams.get("userID") ||
+                   url.searchParams.get("user2ID") ||
+                   url.searchParams.get("NID");
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function getMyUserId() {
+        if (window.userId) return String(window.userId);
+        if (window.userInfo && window.userInfo.userID) return String(window.userInfo.userID);
+        if (window.XID) return String(window.XID);
+
+        const navLink = document.querySelector('a[href*="profiles.php?XID="]');
+        if (navLink) {
+            const id = getPlayerIdFromLink(navLink);
+            if (id) return String(id);
+        }
+        return null;
+    }
+
+    function updateBadgeText(xid, text, isSpy = false) {
+        document.querySelectorAll(`.qa-badge-${xid}`).forEach(badge => {
+            badge.style.position = 'relative';
+            if (isSpy) {
+                badge.innerHTML = `${text}<img src="https://i.ibb.co/23TYRyL/star-v2.png" style="position: absolute; top: -6px; right: -6px; width: 13px; height: 13px; z-index: 101;">`;
+            } else {
+                badge.innerText = text;
+            }
+        });
+        updateTableColumnHeadersAndCells(xid);
+    }
+
+    function updateBadgeColor(xid, ffValue) {
+        if (ffValue == null || isNaN(ffValue)) return;
+        const bgColor = badgeColorForFF(ffValue);
+        const textColor = getContrastColor(bgColor);
+
+        document.querySelectorAll(`.qa-badge-${xid}`).forEach(badge => {
+            badge.style.backgroundColor = bgColor;
+            badge.style.color = textColor;
+        });
+        updateTableColumnHeadersAndCells(xid);
+
+        if (getSetting('qaEnableGauges', false)) {
+            document.querySelectorAll(`.qa-honor-${xid}`).forEach(bar => {
+                applyGauge(bar, ffValue);
+            });
+        }
+    }
+
+    function executeFetch() {
+        const apiKey = GM_getValue('ffApiKey', '');
+        const targets = Array.from(pendingIDs);
+        pendingIDs.clear();
+        if (!targets.length) return;
+
+        if (!apiKey) {
+            targets.forEach(xid => {
+                const spy = spyCache[xid];
+                if (spy && isSpyValid(spy.timestamp) && spy.total > 0) {
+                    statCache[String(xid)] = { statStr: formatTBS(spy.total), ffValue: null, isSpy: true };
+                    updateBadgeText(xid, formatTBS(spy.total), true);
+                    updateBadgeColor(xid, 3.0);
+                } else {
+                    updateBadgeText(xid, 'No Key', false);
+                }
+            });
+            return;
+        }
+
+        GM_xmlhttpRequest({
+            method: "GET",
+            url: `https://ffscouter.com/api/v1/get-stats?key=${apiKey}&targets=${targets.join(',')}`,
+            onload: function (response) {
+                try {
+                    const data = JSON.parse(response.responseText);
+                    let payloadArray = Array.isArray(data) ? data : (data.data || data.targets || []);
+
+                    targets.forEach(xid => {
+                        const info = payloadArray.find(p => String(p?.player_id) === String(xid) || String(p?.id) === String(xid)) || data.data?.[xid] || data[xid];
+
+                        let statStr = 'N/A';
+                        let ffValue = null;
+                        let isSpy = false;
+
+                        if (info) {
+                            const statData = info.stats || info;
+                            let rawStatStr = statData.bs_estimate_human || statData.bs_estimate || 'N/A';
+
+                            if (rawStatStr !== 'N/A') {
+                                const rawNum = parseStatValue(rawStatStr);
+                                if (rawNum !== null) statStr = formatTBS(rawNum);
+                                else statStr = rawStatStr;
+                            }
+
+                            const rawFF = statData.value ?? statData.ff ?? statData.fair_fight ?? info.value ?? info.ff ?? info.fair_fight ?? null;
+                            ffValue = rawFF != null ? parseFloat(rawFF) : null;
+                        }
+
+                        const spy = spyCache[xid];
+                        if (spy && isSpyValid(spy.timestamp) && spy.total > 0) {
+                            statStr = formatTBS(spy.total);
+                            isSpy = true;
+                            if (ffValue == null) ffValue = 3.0;
+                        }
+
+                        if (statStr === 'N/A' && !isSpy) {
+                            updateBadgeText(xid, 'N/A');
+                            return;
+                        }
+
+                        statCache[String(xid)] = { statStr, ffValue, isSpy };
+                        updateBadgeText(xid, statStr, isSpy);
+                        updateBadgeColor(xid, ffValue);
+                    });
+                } catch (e) {
+                    targets.forEach(xid => updateBadgeText(xid, 'Err'));
+                }
+            },
+            onerror: function () {
+                targets.forEach(xid => updateBadgeText(xid, 'Err'));
+            }
+        });
+    }
+
+    function fetchYataSpies(btnElement) {
+        const key = GM_getValue('yataApiKey', '');
+        if (!key) { alert("Please enter a YATA API Key and save first."); return; }
+
+        btnElement.innerText = "Fetching...";
+        btnElement.disabled = true;
+
+        GM_xmlhttpRequest({
+            method: "GET",
+            url: `https://yata.yt/api/v1/spies/?key=${key}`,
+            onload: function (response) {
+                btnElement.innerText = "Import YATA Spies";
+                btnElement.disabled = false;
+                try {
+                    const data = JSON.parse(response.responseText);
+                    if (data.error) return alert("YATA Error: " + data.error);
+
+                    let imported = 0;
+                    for (const [xid, spy] of Object.entries(data.spies || {})) {
+                        spyCache[xid] = {
+                            total: spy.total,
+                            timestamp: spy.total_timestamp,
+                            source: 'YATA'
+                        };
+                        imported++;
+                    }
+                    GM_setValue('qaSpyCache', spyCache);
+                    alert(`Successfully imported ${imported} spies from YATA!`);
+                    location.reload();
+                } catch (e) { alert("Failed to parse YATA data."); }
+            }
+        });
+    }
+
+    function fetchTornStatsSpies(btnElement, forcePrompt = false, specificFacId = null) {
+        const key = GM_getValue('tsApiKey', '');
+        if (!key) {
+            if (forcePrompt) alert("Please enter a TornStats API Key and save first.");
+            else {
+                const originalText = btnElement.innerText;
+                btnElement.innerText = "No API Key";
+                setTimeout(() => btnElement.innerText = originalText, 2000);
+            }
+            return;
+        }
+
+        let facId = specificFacId;
+
+        if (!facId && window.location.href.includes("factions.php")) {
+            const urlParams = new URLSearchParams(window.location.search);
+            facId = urlParams.get('ID');
+            if (!facId) {
+                const facInfo = document.querySelector('.faction-info');
+                if (facInfo) facId = facInfo.getAttribute("data-faction");
+            }
+        }
+
+        if (forcePrompt) {
+            const promptInput = prompt("Enter target Faction ID to pull spies for:", GM_getValue('lastTsFactionId', '48640'));
+            if (promptInput !== null) {
+                facId = promptInput.replace(/\D/g, '');
+                if (facId) GM_setValue('lastTsFactionId', facId);
+            } else {
+                return; // User cancelled prompt
+            }
+        } else if (!facId) {
+            facId = GM_getValue('lastTsFactionId', null);
+        }
+
+        if (!facId) {
+            if (forcePrompt) return;
+            const originalText = btnElement.innerText;
+            btnElement.innerText = "No Fac ID";
+            setTimeout(() => btnElement.innerText = originalText, 2000);
+            return;
+        }
+
+        const originalText = btnElement.innerText;
+        btnElement.innerText = `Fetching...`;
+        btnElement.disabled = true;
+
+        GM_xmlhttpRequest({
+            method: "GET",
+            url: `https://www.tornstats.com/api/v2/${key}/spy/faction/${facId}`,
+            onload: function (response) {
+                btnElement.disabled = false;
+                try {
+                    const data = JSON.parse(response.responseText);
+                    if (!data.status) {
+                        if (forcePrompt) alert("TornStats Error: " + data.message);
+                        else {
+                            btnElement.innerText = "Error";
+                            setTimeout(() => btnElement.innerText = originalText, 2000);
+                        }
+                        return;
+                    }
+
+                    let imported = 0;
+                    for (const [xid, member] of Object.entries(data.faction?.members || {})) {
+                        if (member.spy && member.spy.total > 0) {
+                            spyCache[xid] = {
+                                total: member.spy.total,
+                                timestamp: member.spy.timestamp,
+                                source: 'TornStats'
+                            };
+                            imported++;
+                        }
+                    }
+                    GM_setValue('qaSpyCache', spyCache);
+
+                    if (forcePrompt) {
+                        alert(`Successfully imported ${imported} spies for Faction #${facId}!`);
+                        location.reload();
+                    } else {
+                        btnElement.innerText = `Imported ${imported}!`;
+                        btnElement.style.background = "#4caf50";
+                        setTimeout(() => {
+                            btnElement.innerText = originalText;
+                            btnElement.style.background = ""; // Restore to class style
+                        }, 3000);
+
+                        // Force refresh badge for the profile
+                        const currentXid = new URL(window.location.href).searchParams.get("XID");
+                        if (currentXid) scheduleFetch(currentXid);
+                    }
+                } catch (e) {
+                    if (forcePrompt) alert("Failed to parse TornStats data.");
+                    else {
+                        btnElement.innerText = "Error";
+                        setTimeout(() => btnElement.innerText = originalText, 2000);
+                    }
+                }
+            }
+        });
+    }
+
+    function scheduleFetch(xid) {
+        pendingIDs.add(xid);
+        if (fetchTimeout) clearTimeout(fetchTimeout);
+        fetchTimeout = setTimeout(executeFetch, 500);
+    }
+
+    function hideFactionLogos() {
+        const url = window.location.href;
+        if (url.includes("sid=attackLog") || url.includes("forums.php") || isExcludedHofPage(url)) return;
+
+        document.querySelectorAll('a[href*="factions.php"]').forEach(link => {
+            if (link.closest('#react-profile-mini-root, [class*="mini-profile"], [class*="miniProfile"], [id*="mini-profile"]')) {
+                if (link.style.display === 'none') link.style.display = '';
+                return;
+            }
+
+            if (link.querySelector('img') || link.style.backgroundImage || (link.className && link.className.includes('faction'))) {
+                if (link.closest('.table-row, .t-row, li, tr, [class*="member"], [class*="row"], [class*="user"]')) {
+                    if (!link.closest('header, #header-root, .faction-header')) {
+                        link.style.display = 'none';
+                    }
+                }
+            }
+        });
+        document.querySelectorAll('img[src*="factiontags"], img[src*="factions"]').forEach(img => {
+            if (img.closest('#react-profile-mini-root, [class*="mini-profile"], [class*="miniProfile"], [id*="mini-profile"]')) {
+                if (img.style.display === 'none') img.style.display = '';
+                return;
+            }
+
+            if (img.closest('.table-row, .t-row, li, tr, [class*="member"], [class*="row"], [class*="user"]')) {
+                img.style.display = 'none';
+            }
+        });
+    }
+
+    function hideRankedWarScoreColumn() {
+        if (window.location.href.includes("war.php") || document.querySelector('.faction-war, [class*="factionWar"], #faction_war_list_id')) {
+            document.querySelectorAll('.faction-war .score, [class*="factionWar"] [class*="score"], #faction_war_list_id .score').forEach(el => {
+                el.style.display = 'none';
+            });
+        }
+    }
+
+    function processForumPage() {
+        if (!window.location.href.includes("forums.php")) return;
+
+        const iconTrays = document.querySelectorAll('ul#iconTray, .status.icons > ul');
+        iconTrays.forEach(tray => {
+            if (tray.dataset.qaTrayAttached) return;
+            tray.dataset.qaTrayAttached = "true";
+
+            let xid = null;
+            const postWrapper = tray.closest('.info-wrap, .user-info, .poster, .post, [class*="postContainer"], li');
+            if (postWrapper) {
+                const profileLink = postWrapper.querySelector('.name, a[href*="XID="], a[href*="userID="]');
+                xid = getPlayerIdFromLink(profileLink);
+            }
+
+            if (!xid) return;
+
+            const badge = document.createElement("span");
+            badge.className = `iconStats qa-badge-${xid}`;
+            badge.style.cssText = `
+                display: inline-flex; align-items: center; justify-content: center;
+                height: 15px; padding: 0 4px; font-size: 10px; position: relative;
+                font-weight: bold; color: white; border: 1px solid #222; border-radius: 2px;
+                background-color: #444; cursor: pointer; vertical-align: middle; line-height: 1;
+            `;
+            badge.innerHTML = '...';
+
+            badge.onmousedown = (e) => {
+                e.preventDefault(); e.stopPropagation();
+                dismissKeyboard();
+                window.open(`https://www.torn.com/page.php?sid=attack&user2ID=${xid}`, '_blank');
+            };
+
+            const li = document.createElement('li');
+            li.style.cssText = "display: inline-block; vertical-align: middle; margin-left: 6px; margin-bottom: 0px; position: relative; top: -12px;";
+            li.appendChild(badge);
+            tray.appendChild(li);
+
+            if (statCache[xid]) {
+                updateBadgeText(xid, statCache[xid].statStr, statCache[xid].isSpy);
+                updateBadgeColor(xid, statCache[xid].ffValue);
+            } else scheduleFetch(xid);
+        });
+
+        const profileLinks = document.querySelectorAll(
+            'a[href*="profiles.php"], a[href*="XID="], a[href*="userID="], a[href*="userId="]'
+        );
+
+        profileLinks.forEach(link => {
+            if (link.closest(CHAT_AND_NAV_IGNORE_SELECTOR) ||
+                link.closest('#mini-profile-root, [class*="mini-profile"], [class*="miniProfile"]') ||
+                link.dataset.attackAttached) {
+                return;
+            }
+
+            if (link.querySelector('img') || (link.style && link.style.backgroundImage) || !link.innerText.trim()) {
+                link.dataset.attackAttached = "true";
+                return;
+            }
+
+            const xid = getPlayerIdFromLink(link);
+            if (!xid) return;
+
+            link.dataset.attackAttached = "true";
+
+            const isMainName = link.innerText.includes(`[${xid}]`);
+
+            const badge = document.createElement("span");
+            badge.className = `iconStats qa-badge-${xid}`;
+            badge.style.cssText = `
+                display: inline-flex; align-items: center; justify-content: center; position: relative;
+                height: ${isMainName ? '16px' : '14px'};
+                padding: 0 4px; margin-left: 6px;
+                font-size: ${isMainName ? '11px' : '10px'};
+                font-weight: bold; color: white; border: 1px solid black; border-radius: 2px;
+                background-color: #444; cursor: pointer; vertical-align: middle; line-height: 1;
+            `;
+            badge.innerHTML = '...';
+
+            badge.onmousedown = (e) => {
+                e.preventDefault(); e.stopPropagation();
+                dismissKeyboard();
+                window.open(`https://www.torn.com/page.php?sid=attack&user2ID=${xid}`, '_blank');
+            };
+
+            link.parentNode.insertBefore(badge, link.nextSibling);
+
+            if (statCache[xid]) {
+                updateBadgeText(xid, statCache[xid].statStr, statCache[xid].isSpy);
+                updateBadgeColor(xid, statCache[xid].ffValue);
+            } else scheduleFetch(xid);
+        });
+    }
+
+    function injectBazaarBadge(linkElement, xid) {
+        if (linkElement.dataset.attackAttached) return;
+        linkElement.dataset.attackAttached = "true";
+
+        const badge = document.createElement("span");
+        badge.className = `iconStats qa-badge-${xid}`;
+        badge.style.cssText = `
+            display: inline-flex; align-items: center; justify-content: center; position: relative;
+            height: 14px; padding: 0 3px; margin-right: 4px; font-size: 10px;
+            font-weight: bold; color: white; border: 1px solid black; border-radius: 2px;
+            background-color: #444; cursor: pointer; vertical-align: middle; flex-shrink: 0;
+        `;
+        badge.innerHTML = '...';
+
+        badge.onmousedown = (e) => {
+            e.preventDefault(); e.stopPropagation();
+            dismissKeyboard();
+            window.open(`https://www.torn.com/page.php?sid=attack&user2ID=${xid}`, '_blank');
+        };
+
+        linkElement.parentNode.insertBefore(badge, linkElement);
+        if (statCache[xid]) {
+            updateBadgeText(xid, statCache[xid].statStr, statCache[xid].isSpy);
+            updateBadgeColor(xid, statCache[xid].ffValue);
+        } else scheduleFetch(xid);
+    }
+
+    function injectGridBadge(linkElement, xid) {
+        if (linkElement.dataset.attackAttached) return;
+
+        const currentUrl = window.location.href.toLowerCase();
+        const isRR = currentUrl.includes("russianroulette") || currentUrl.includes("casino.php");
+        const isMarket = currentUrl.includes("itemmarket") || currentUrl.includes("imarket.php");
+
+        if (isMarket) {
+            linkElement.style.marginLeft = "28px";
+            linkElement.style.display = "inline-block";
+        }
+
+        if (isRR) {
+            const myXid = getMyUserId();
+            const bodyText = document.body ? document.body.innerText : "";
+            const isMatchScreen = bodyText.includes("POT MONEY") || bodyText.includes("You pull up a chair");
+
+            if (isMatchScreen && myXid && String(xid) === String(myXid)) {
+                linkElement.dataset.attackAttached = "true";
+                return;
+            }
+
+            let row = linkElement.closest('tr, li, [class*="row"], [role="row"]');
+            if (row && row.children.length >= 2) {
+                const cells = Array.from(row.children);
+                const statusCell = cells.find(c => c.innerText && c.innerText.toLowerCase().includes('wait')) || cells[1];
+
+                if (statusCell) {
+                    linkElement.dataset.attackAttached = "true";
+                    const badge = document.createElement("span");
+                    badge.className = `iconStats qa-badge-${xid}`;
+                    badge.style.cssText = `
+                        display: inline-flex; align-items: center; justify-content: center; position: relative;
+                        height: 16px; padding: 0 4px; margin-right: 6px; font-size: 11px;
+                        font-weight: bold; color: white; border: 1px solid black; border-radius: 2px;
+                        background-color: #444; cursor: pointer; vertical-align: middle; flex-shrink: 0;
+                    `;
+                    badge.innerHTML = '...';
+
+                    badge.onmousedown = (e) => {
+                        e.preventDefault(); e.stopPropagation();
+                        dismissKeyboard();
+                        window.open(`https://www.torn.com/page.php?sid=attack&user2ID=${xid}`, '_blank');
+                    };
+
+                    statusCell.style.display = 'inline-flex';
+                    statusCell.style.alignItems = 'center';
+                    statusCell.insertBefore(badge, statusCell.firstChild);
+
+                    if (statCache[xid]) {
+                        updateBadgeText(xid, statCache[xid].statStr, statCache[xid].isSpy);
+                        updateBadgeColor(xid, statCache[xid].ffValue);
+                    } else scheduleFetch(xid);
+                    return;
+                }
+            }
+
+            if (isMatchScreen) {
+                linkElement.dataset.attackAttached = "true";
+                return;
+            }
+        }
+
+        linkElement.dataset.attackAttached = "true";
+
+        const row = linkElement.closest('li, tr, .table-row, [class*="table-row"], [role="row"]');
+        const isWarRow = row && (
+            row.querySelector('a[href*="sid=attack"]') !== null ||
+            row.querySelector('.attack, [class*="attack"], .score, [class*="score"]') !== null ||
+            row.classList.contains('enemy') ||
+            row.classList.contains('your')
+        );
+
+        let leftMargin = "-8px";
+let topOffset = "1px";
+let badgeTransform = "none";
+const isHof = currentUrl.includes("sid=hof") || currentUrl.includes("halloffame.php");
+
+const isPoints = currentUrl.includes("pmarket.php");
+
+if (isPoints) {
+    leftMargin = "0px";
+    topOffset = "50%";
+    badgeTransform = "translateY(-50%)";
+} else if (isHof) {
+    leftMargin = "-4px";
+    topOffset = "50%";
+    badgeTransform = "translate(-100%, -50%)";
+} else if (currentUrl.includes("sid=userlist") || currentUrl.includes("userlist")) {
+            leftMargin = "35px";
+            topOffset = "3px";
+        } else if (isWarRow) {
+            leftMargin = "-32px";
+            topOffset = "-9px";
+        } else if (currentUrl.includes("factions.php")) {
+            leftMargin = "-42px";
+            topOffset = "1px";
+        } else if (currentUrl.includes("sid=list") || currentUrl.includes("type=enemy") || currentUrl.includes("type=friend") || currentUrl.includes("type=target")) {
+            leftMargin = "-45px";
+        } else if (isMarket) {
+            leftMargin = "0px";
+        }
+
+        let wrapper = document.createElement("div");
+        wrapper.className = "TDup_GhostOverlay";
+        wrapper.style.cssText = `position:absolute; z-index:100; top:${topOffset}; left:0; margin-left:${leftMargin}; transform:${badgeTransform};`;
+
+        wrapper.innerHTML = `
+            <div class="iconStats qa-badge-${xid}" style="display:inline-flex; align-items:center; justify-content:center; height:16px; width:fit-content; padding:0 3px; font-size:11px; font-weight:bold; color:white; border:1px solid black; cursor:pointer; background-color:#444; border-radius:2px; position:relative;">
+                ...
+            </div>
+        `;
+
+        wrapper.querySelector('.iconStats').onmousedown = (e) => {
+            e.preventDefault(); e.stopPropagation();
+            dismissKeyboard();
+            window.open(`https://www.torn.com/page.php?sid=attack&user2ID=${xid}`, '_blank');
+        };
+
+        let parent = linkElement.parentElement;
+        parent.style.position = "relative";
+        parent.insertBefore(wrapper, linkElement);
+
+if (isPoints) {
+    const bar = (row && row.querySelector('.honor-text-wrap')) || linkElement;
+    const placeBadge = () => {
+        const b = bar.getBoundingClientRect();
+        const p = parent.getBoundingClientRect();
+        if (b.width > 40) {
+            wrapper.style.left = (b.right - p.left + 6) + 'px';
+            wrapper.style.visibility = 'visible';
+        }
+    };
+    wrapper.style.visibility = 'hidden';
+    placeBadge();
+    if (window.ResizeObserver) {
+        new ResizeObserver(placeBadge).observe(bar);
+        new ResizeObserver(placeBadge).observe(parent);
+    }
+    window.addEventListener('resize', placeBadge);
+    setTimeout(placeBadge, 1500);
+}
+        if (statCache[xid]) {
+            updateBadgeText(xid, statCache[xid].statStr, statCache[xid].isSpy);
+            updateBadgeColor(xid, statCache[xid].ffValue);
+        } else scheduleFetch(xid);
+    }
+
+    function injectMiniProfileStats() {
+        const miniProfileContainers = document.querySelectorAll(
+            '#mini-profile-root, [class*="mini-profile"], [class*="miniProfile"], [id*="mini-profile"]'
+        );
+
+        miniProfileContainers.forEach(container => {
+            if (container.closest(CHAT_AND_NAV_IGNORE_SELECTOR) || container.dataset.qaMiniAttached) return;
+
+            const profileLinks = container.querySelectorAll('a[href*="profiles.php?XID="]');
+            if (!profileLinks.length) return;
+
+            let xid = null;
+            for (const link of profileLinks) {
+                const id = getPlayerIdFromLink(link);
+                if (id) {
+                    xid = id;
+                    break;
+                }
+            }
+
+            if (!xid) return;
+
+            const iconsWrapper = container.querySelector('ul[class*="icon" i], div[class*="icon" i]');
+            if (!iconsWrapper) return;
+
+            container.dataset.qaMiniAttached = "true";
+
+            const badge = document.createElement("span");
+            badge.className = `qa-badge-${xid}`;
+            badge.style.cssText = `
+                display: inline-flex; align-items: center; justify-content: center; position: relative;
+                height: 16px; padding: 0 4px; margin-left: 8px;
+                font-size: 11px; font-weight: bold; color: white; border: 1px solid black;
+                border-radius: 2px; background-color: #444; cursor: pointer; vertical-align: middle;
+            `;
+            badge.innerHTML = '...';
+
+            badge.onmousedown = (e) => {
+                e.preventDefault(); e.stopPropagation();
+                dismissKeyboard();
+                window.open(`https://www.torn.com/page.php?sid=attack&user2ID=${xid}`, '_blank');
+            };
+
+            if (iconsWrapper.tagName === 'UL') {
+                const li = document.createElement('li');
+                li.style.cssText = 'display: inline-flex; vertical-align: middle;';
+                li.appendChild(badge);
+                iconsWrapper.appendChild(li);
+            } else {
+                iconsWrapper.style.display = 'flex';
+                iconsWrapper.style.alignItems = 'center';
+                iconsWrapper.appendChild(badge);
+            }
+
+            if (statCache[xid]) {
+                updateBadgeText(xid, statCache[xid].statStr, statCache[xid].isSpy);
+                updateBadgeColor(xid, statCache[xid].ffValue);
+            } else scheduleFetch(xid);
+        });
+    }
+
+    function injectProfileStats() {
+        if (!window.location.href.includes("profiles.php")) return;
+        if (document.getElementById("qa-profile-stat-container")) return;
+
+        const match = window.location.href.match(/(?:XID|userId|userID|user2ID|NID)=([0-9]+)/i);
+        const xid = match ? match[1] : null;
+        if (!xid) return;
+
+        const h4 = document.querySelector('.user-profile h4, [class*="profileHeader"] h4, h4');
+        if (!h4) return;
+
+        const container = document.createElement("div");
+        container.id = "qa-profile-stat-container";
+        container.style.cssText = "display: flex; align-items: center; clear: both; margin: 6px 0 10px 0; font-size: 13px; font-weight: normal; line-height: 1.4;";
+
+        const label = document.createElement("span");
+        label.style.cssText = "font-weight: bold; margin-right: 6px;";
+        label.innerText = "Total Battle Stats:";
+
+        const badge = document.createElement("span");
+        badge.id = "qa-profile-stat";
+        badge.className = `qa-badge-${xid}`;
+        badge.style.cssText = "display: inline-flex; align-items: center; justify-content: center; position: relative; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; color: white; background: #444; vertical-align: middle; border: 1px solid black; cursor: pointer;";
+        badge.innerHTML = "...";
+
+        badge.onmousedown = (e) => {
+            e.preventDefault(); e.stopPropagation();
+            dismissKeyboard();
+            window.open(`https://www.torn.com/page.php?sid=attack&user2ID=${xid}`, '_blank');
+        };
+
+        container.appendChild(label);
+        container.appendChild(badge);
+
+        const tsButton = document.createElement("button");
+        tsButton.innerText = "Import TS Spies";
+        tsButton.style.cssText = "margin-left: 10px; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; color: white; background: #444; border: 1px solid #666; cursor: pointer; vertical-align: middle; transition: background-color 0.2s;";
+        tsButton.onmousedown = (e) => {
+            e.preventDefault(); e.stopPropagation();
+
+            let targetFacId = null;
+            const facLink = document.querySelector('a[href*="factions.php?step=profile&ID="]');
+            if (facLink) {
+                const m = facLink.href.match(/ID=(\d+)/);
+                if (m) targetFacId = m[1];
+            }
+
+            fetchTornStatsSpies(tsButton, false, targetFacId);
+        };
+        container.appendChild(tsButton);
+
+        const linksTopWrap = h4.parentNode ? h4.parentNode.querySelector(".links-top-wrap") : null;
+        if (linksTopWrap && linksTopWrap.parentNode) {
+            linksTopWrap.parentNode.insertBefore(container, linksTopWrap.nextSibling);
+        } else if (h4.nextSibling) {
+            h4.parentNode.insertBefore(container, h4.nextSibling);
+        } else {
+            h4.parentNode.appendChild(container);
+        }
+
+        if (statCache[xid]) {
+            updateBadgeText(xid, statCache[xid].statStr, statCache[xid].isSpy);
+            updateBadgeColor(xid, statCache[xid].ffValue);
+        } else {
+            scheduleFetch(xid);
+        }
+    }
+
+    function injectFlightStats() {
+        if (!window.location.href.includes("profiles.php?XID=")) return;
+        const profileStatus = document.querySelector('.profile-status');
+        if (!profileStatus) return;
+
+        const isTravelling = profileStatus.classList.contains('travelling') || profileStatus.querySelector('.travelling');
+        if (!isTravelling) {
+            if (flightInterval) clearInterval(flightInterval);
+            const oldBox = document.getElementById('qa-flight-info');
+            if (oldBox) oldBox.remove();
+            return;
+        }
+
+        if (document.getElementById('qa-flight-info')) return;
+        const xid = new URL(window.location.href).searchParams.get("XID");
+        const apiKey = GM_getValue('ffApiKey', '');
+        if (!xid || !apiKey) return;
+
+        const description = profileStatus.querySelector('.description') || profileStatus;
+        const container = document.createElement('div');
+        container.id = 'qa-flight-info';
+        container.style.cssText = "position: absolute; right: 10px; bottom: 4px; z-index: 10; text-align: right; font-size: 11px; color: #ffffff; text-shadow: 0 1px 3px rgba(0,0,0,0.9); pointer-events: none; line-height: 1.25;";
+        description.style.position = 'relative';
+        description.appendChild(container);
+
+        GM_xmlhttpRequest({
+            method: "GET",
+            url: `https://ffscouter.com/api/v1/player-flights?key=${apiKey}&target=${xid}`,
+            onload: function (response) {
+                try {
+                    const data = JSON.parse(response.responseText);
+                    const current = data?.current || data?.result?.current;
+                    if (!current || !current.earliest_arrival_time || !current.latest_arrival_time) {
+                        container.innerText = "Landing: unavailable";
+                        return;
+                    }
+
+                    const earliest = Number(current.earliest_arrival_time);
+                    const latest = Number(current.latest_arrival_time);
+
+                    function updateCountdown() {
+                        const now = Date.now() / 1000;
+                        const eRem = earliest - now;
+                        const lRem = latest - now;
+                        const eTCT = formatTCT(earliest);
+                        const lTCT = formatTCT(latest);
+
+                        let text = "";
+                        if (lRem <= -300) text = "Landing: Late / Delayed";
+                        else if (lRem <= 0) text = `Landing: Just landed (${lTCT} TCT)`;
+                        else if (eRem <= 0) text = `Landing: Imminent - ${formatDuration(lRem)}<br>(${lTCT} TCT latest)`;
+                        else text = `Landing: ${formatDuration(eRem)} - ${formatDuration(lRem)}<br>(${eTCT} - ${lTCT} TCT)`;
+                        container.innerHTML = text;
+                    }
+
+                    updateCountdown();
+                    if (flightInterval) clearInterval(flightInterval);
+                    flightInterval = setInterval(updateCountdown, 1000);
+                } catch (e) { console.error(e); }
+            }
+        });
+    }
+
+    function renderSwatches(schemeId) {
+        const container = document.getElementById('qa-swatch-container');
+        if (!container) return;
+        const palette = BUILTIN_PALETTES[schemeId] || BUILTIN_PALETTES['classic'];
+        container.innerHTML = palette.map(color => `
+            <svg class="qa-swatch" viewBox="0 0 20 13">
+                <path fill-rule="evenodd" fill="${color}" stroke="#000000" stroke-width="1.5" d="M 0,0 H 13 20 L 10,12 Z"></path>
+            </svg>
+        `).join('');
+    }
+
+    function injectProfileSettingsPanel() {
+        if (!window.location.href.includes("profiles.php")) return;
+
+        // Target the native action container on the profile page
+        const actionList = document.querySelector('.profile-action .buttons-list');
+        if (!actionList || actionList.dataset.qaSettingsAttached) return;
+
+        actionList.dataset.qaSettingsAttached = "true";
+
+        // 1. Create the toggle button for the Actions container
+        const settingsBtn = document.createElement('a');
+        settingsBtn.className = 'profile-button active';
+        settingsBtn.style.cursor = 'pointer';
+        settingsBtn.title = "Quick Attack Settings";
+        settingsBtn.setAttribute('aria-label', 'QA Settings');
+
+        // Injecting a Gear SVG matching Torn's native icon styling
+        settingsBtn.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="icon___GP196" style="transform: scale(0.6); transform-origin: center;">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+        `;
+
+        // Attach listener to the button, referring to the overlay live
+        settingsBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const liveOverlay = document.getElementById('qa-settings-modal-wrap');
+            if (liveOverlay) liveOverlay.classList.add('qa-active');
+        });
+
+        // Insert at the end of the action buttons row
+        actionList.appendChild(settingsBtn);
+
+        // 2. Build the Overlay & Modal Structure (Ensure it only runs once)
+        if (!document.getElementById('qa-settings-modal-wrap')) {
+            let overlay = document.createElement('div');
+            overlay.id = 'qa-settings-modal-wrap';
+            overlay.className = 'qa-settings-overlay';
+
+            let pageTogglesHTML = '';
+            PAGE_CONFIG.forEach(cfg => {
+                pageTogglesHTML += `
+                    <label class="qa-toggle">
+                        <input type="checkbox" id="${cfg.id}" ${getSetting(cfg.key, true) ? 'checked' : ''}>
+                        <span class="qa-toggle-slider"></span>
+                        <span class="qa-toggle-label">${cfg.label}</span>
+                    </label>
+                `;
+            });
+
+            const modalContent = document.createElement('div');
+            modalContent.className = 'qa-settings-modal';
+
+            modalContent.innerHTML = `
+                <div class="qa-modal-header">
+                    <span>Quick Attack Settings</span>
+                    <span class="qa-close-btn" title="Close">&times;</span>
+                </div>
+
+                <div class="qa-premium-content">
+
+                    <!-- Third Party APIs & Spies -->
+                    <details class="qa-premium-card">
+                        <summary>API Keys & Spy Import</summary>
+                        <div style="margin-top: 14px;">
+                            <div class="qa-premium-input-group">
+                                <label>FF Scouter API Key:</label>
+                                <input type="text" id="qa-key-input" class="qa-premium-input" value="${GM_getValue('ffApiKey', '')}" placeholder="Paste FFScouter key...">
+                            </div>
+                            <div class="qa-premium-input-group">
+                                <label>YATA API Key:</label>
+                                <input type="text" id="qa-yata-input" class="qa-premium-input" value="${GM_getValue('yataApiKey', '')}" placeholder="Paste YATA key...">
+                                <div style="margin-top: 8px;">
+                                    <button id="qa-import-yata-btn" type="button" class="qa-premium-btn qa-premium-btn-secondary">Import YATA Spies</button>
+                                </div>
+                            </div>
+                            <div class="qa-premium-input-group">
+                                <label>TornStats API Key:</label>
+                                <input type="text" id="qa-ts-input" class="qa-premium-input" value="${GM_getValue('tsApiKey', '')}" placeholder="Paste TornStats key...">
+                                <div style="margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px;">
+                                    <button id="qa-import-ts-btn" type="button" class="qa-premium-btn qa-premium-btn-secondary">Import TS Spies</button>
+                                    <button id="qa-clear-spies-btn" type="button" class="qa-premium-btn qa-premium-btn-danger">Clear Spies</button>
+                                </div>
+                            </div>
+                                                       <div class="qa-premium-input-group">
+                                <label>Torn API Key (public, for hospital timers):</label>
+                                <input type="text" id="qa-torn-input" class="qa-premium-input" value="${GM_getValue('tornApiKey', '')}" placeholder="16-character key...">
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 10px; margin-top: 16px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.05);">
+                                <span style="font-size: 13px; font-weight: 500;">Premium Status:</span>
+                                <span id="qa-premium-badge" class="qa-badge-premium" style="background: #f39c12; color: #fff;">Unknown</span>
+                                <button id="qa-verify-btn" type="button" class="qa-premium-btn qa-premium-btn-secondary">Verify</button>
+                            </div>
+                        </div>
+                    </details>
+
+                    <!-- Color Scheme & FF Ranges Settings -->
+                    <details class="qa-premium-card">
+                        <summary>Display Settings</summary>
+                        <div style="margin-top: 14px;">
+                            <div class="qa-premium-input-group">
+                                <label>Color Scheme:</label>
+                                <select id="qa-color-scheme" class="qa-premium-select">
+                                    <option value="classic" ${getSetting('qaColorScheme', 'classic') === 'classic' ? 'selected' : ''}>Classic (Default)</option>
+                                    <option value="cool_diverging" ${getSetting('qaColorScheme', 'classic') === 'cool_diverging' ? 'selected' : ''}>Cool Diverging</option>
+                                    <option value="neon" ${getSetting('qaColorScheme', 'classic') === 'neon' ? 'selected' : ''}>Neon</option>
+                                    <option value="plasma" ${getSetting('qaColorScheme', 'classic') === 'plasma' ? 'selected' : ''}>Plasma</option>
+                                </select>
+                                <div id="qa-swatch-container" class="qa-swatch-row" style="margin-top: 8px;"></div>
+                            </div>
+                            <div class="qa-premium-input-group">
+                                <label>FF Ranges (Low, High, Max):</label>
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <input type="number" id="qa-ff-low" class="qa-premium-input" value="${getSetting('qaFfRangeLow', 2)}" step="0.1" style="width: 70px; text-align: center;">
+                                    <span style="color: #666; font-weight: bold;">&lt;</span>
+                                    <input type="number" id="qa-ff-high" class="qa-premium-input" value="${getSetting('qaFfRangeHigh', 4)}" step="0.1" style="width: 70px; text-align: center;">
+                                    <span style="color: #666; font-weight: bold;">&lt;</span>
+                                    <input type="number" id="qa-ff-max" class="qa-premium-input" value="${getSetting('qaFfRangeMax', 8)}" step="0.1" style="width: 70px; text-align: center;">
+                                </div>
+                            </div>
+                        </div>
+                    </details>
+
+                    <!-- Quick Attack Enabled Pages Section -->
+                    <details class="qa-premium-card">
+                        <summary>Enabled Pages</summary>
+                        <div class="qa-grid-layout" style="margin-top: 14px;">
+                            ${pageTogglesHTML}
+                        </div>
+                    </details>
+
+                    <!-- Feature Toggles Section -->
+                    <details class="qa-premium-card">
+                        <summary>Feature Toggles</summary>
+                        <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 14px;">
+                            <label class="qa-toggle">
+                                <input type="checkbox" id="qa-fac-filter-toggle" ${getSetting('showFactionFilter', true) ? 'checked' : ''}>
+                                <span class="qa-toggle-slider"></span>
+                                <span class="qa-toggle-label">Show faction filter box</span>
+                            </label>
+                            <label class="qa-toggle">
+                                <input type="checkbox" id="qa-war-filter-toggle" ${getSetting('showWarFilter', true) ? 'checked' : ''}>
+                                <span class="qa-toggle-slider"></span>
+                                <span class="qa-toggle-label">Show war filter box</span>
+                            </label>
+                            <label class="qa-toggle">
+                                <input type="checkbox" id="qa-gauge-toggle" ${getSetting('qaEnableGauges', false) ? 'checked' : ''}>
+                                <span class="qa-toggle-slider"></span>
+                                <span class="qa-toggle-label">Enable Visual Gauges (Honor Bars)</span>
+                            </label>
+                        </div>
+                    </details>
+                    <!-- Chain Button Section -->
+                    <details class="qa-premium-card">
+                        <summary>Chain Button</summary>
+                        <div style="margin-top: 14px;">
+                            <label class="qa-toggle">
+                                <input type="checkbox" id="qa-chain-enabled" ${getSetting('qaChainEnabled', true) ? 'checked' : ''}>
+                                <span class="qa-toggle-slider"></span>
+                                <span class="qa-toggle-label">Enable chain button (green FF)</span>
+                            </label>
+                            <div class="qa-premium-input-group">
+                                <label>Button opens:</label>
+                                <select id="qa-chain-link" class="qa-premium-select">
+                                    <option value="attack" ${getSetting('qaChainLink', 'attack') === 'attack' ? 'selected' : ''}>Attack page</option>
+                                    <option value="profile" ${getSetting('qaChainLink', 'attack') === 'profile' ? 'selected' : ''}>Profile page</option>
+                                </select>
+                            </div>
+                            <div class="qa-premium-input-group">
+                                <label>Open in:</label>
+                                <select id="qa-chain-tab" class="qa-premium-select">
+                                    <option value="newtab" ${getSetting('qaChainTab', 'newtab') === 'newtab' ? 'selected' : ''}>New tab</option>
+                                    <option value="sametab" ${getSetting('qaChainTab', 'newtab') === 'sametab' ? 'selected' : ''}>Same tab</option>
+                                </select>
+                            </div>
+                            <div class="qa-premium-input-group">
+                                <label>Level (min / max):</label>
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <input type="number" id="qa-chain-minlvl" class="qa-premium-input" placeholder="No min" value="${getSetting('qaChainMinLvl', null) ?? ''}" style="width: 90px; text-align: center;">
+                                    <input type="number" id="qa-chain-maxlvl" class="qa-premium-input" placeholder="No max" value="${getSetting('qaChainMaxLvl', null) ?? ''}" style="width: 90px; text-align: center;">
+                                </div>
+                            </div>
+                            <div class="qa-premium-input-group">
+                                <label>FF (min / max):</label>
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <input type="number" step="0.1" id="qa-chain-minff" class="qa-premium-input" placeholder="No min" value="${getSetting('qaChainMinFF', null) ?? ''}" style="width: 90px; text-align: center;">
+                                    <input type="number" step="0.1" id="qa-chain-maxff" class="qa-premium-input" placeholder="No max" value="${getSetting('qaChainMaxFF', 2.5) ?? ''}" style="width: 90px; text-align: center;">
+                                </div>
+                            </div>
+                            <label class="qa-toggle">
+                                <input type="checkbox" id="qa-chain-inactive" ${getSetting('qaChainInactive', true) ? 'checked' : ''}>
+                                <span class="qa-toggle-slider"></span>
+                                <span class="qa-toggle-label">Inactive only (14+ days offline)</span>
+                            </label>
+                            <label class="qa-toggle">
+                                <input type="checkbox" id="qa-chain-factionless" ${getSetting('qaChainFactionless', false) ? 'checked' : ''}>
+                                <span class="qa-toggle-slider"></span>
+                                <span class="qa-toggle-label">Factionless only</span>
+                            </label>
+                        </div>
+                    </details>
+
+                    <!-- Save Action -->
+                    <div style="display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 8px;">
+                        <span id="qa-panel-saved-msg" style="color: #4caf50; font-size: 13px; font-weight: 600; display: none;">✓ Saved! Reloading...</span>
+                        <button id="qa-save-panel-btn" type="button" class="qa-premium-btn qa-premium-btn-primary">
+                            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" style="margin-right:6px;"><path d="M2 1a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4.207a2 2 0 0 0-.586-1.414l-2.793-2.793A2 2 0 0 0 11.207 1H2zm6.5 10.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zM1 3a1 1 0 0 1 1-1h8v4H2V3z"/></svg>
+                            Save & Apply
+                        </button>
+                    </div>
+                </div>
+            `.replace(/[\u00A0\u2000-\u200B]/g, ' ');
+
+            overlay.appendChild(modalContent);
+            document.body.appendChild(overlay);
+
+            // --- Interaction Event Listeners ---
+
+            // Close button logic
+            modalContent.querySelector('.qa-close-btn').addEventListener('click', () => {
+                overlay.classList.remove('qa-active');
+            });
+
+            // Close on background click
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) overlay.classList.remove('qa-active');
+            });
+
+            // Key verification and swatches
+            const verifyBtn = document.getElementById('qa-verify-btn');
+            const badge = document.getElementById('qa-premium-badge');
+            const keyInput = document.getElementById('qa-key-input');
+            const schemeSelect = document.getElementById('qa-color-scheme');
+
+            schemeSelect.addEventListener('change', (e) => renderSwatches(e.target.value));
+            renderSwatches(schemeSelect.value);
+
+            function checkKey(key) {
+                if (!key) {
+                    badge.style.background = '#d73a49';
+                    badge.innerText = 'Disabled';
+                    return;
+                }
+                GM_xmlhttpRequest({
+                    method: "GET",
+                    url: `https://ffscouter.com/api/v1/check-key?key=${key}`,
+                    onload: function (resp) {
+                        try {
+                            const json = JSON.parse(resp.responseText);
+                            const result = json.result || json;
+                            if (result.is_premium) {
+                                badge.style.background = '#2ea043';
+                                badge.innerText = 'Enabled';
+                            } else {
+                                badge.style.background = '#d73a49';
+                                badge.innerText = 'Disabled';
+                            }
+                        } catch (e) {
+                            badge.style.background = '#f39c12';
+                            badge.innerText = 'Unknown';
+                        }
+                    }
+                });
+            }
+
+            if (keyInput.value.trim()) checkKey(keyInput.value.trim());
+            verifyBtn.onclick = () => checkKey(keyInput.value.trim());
+
+            // API Import Actions
+            document.getElementById('qa-import-yata-btn').onclick = (e) => fetchYataSpies(e.target);
+            document.getElementById('qa-import-ts-btn').onclick = (e) => fetchTornStatsSpies(e.target, true);
+            document.getElementById('qa-clear-spies-btn').onclick = () => {
+                if(confirm("Clear all imported spies from local storage?")) {
+                    GM_setValue('qaSpyCache', {});
+                    alert("Spies cleared!");
+                }
+            };
+
+            // Save Button Handling
+            document.getElementById('qa-save-panel-btn').onclick = () => {
+                const keyVal = keyInput.value.trim();
+                GM_setValue('ffApiKey', keyVal);
+                GM_setValue('yataApiKey', document.getElementById('qa-yata-input').value.trim());
+                GM_setValue('tsApiKey', document.getElementById('qa-ts-input').value.trim());
+                GM_setValue('tornApiKey', document.getElementById('qa-torn-input').value.trim());
+
+                GM_setValue('showFactionFilter', document.getElementById('qa-fac-filter-toggle').checked);
+                GM_setValue('showWarFilter', document.getElementById('qa-war-filter-toggle').checked);
+                GM_setValue('qaEnableGauges', document.getElementById('qa-gauge-toggle').checked);
+
+                GM_setValue('qaColorScheme', document.getElementById('qa-color-scheme').value);
+                GM_setValue('qaFfRangeLow', parseFloat(document.getElementById('qa-ff-low').value) || 2);
+                GM_setValue('qaFfRangeHigh', parseFloat(document.getElementById('qa-ff-high').value) || 4);
+                GM_setValue('qaFfRangeMax', parseFloat(document.getElementById('qa-ff-max').value) || 8);
+                                const numOrNull = (id) => {
+                    const v = document.getElementById(id).value.trim();
+                    const n = Number(v);
+                    return (v === '' || Number.isNaN(n)) ? null : n;
+                };
+                GM_setValue('qaChainEnabled', document.getElementById('qa-chain-enabled').checked);
+                GM_setValue('qaChainLink', document.getElementById('qa-chain-link').value);
+                GM_setValue('qaChainTab', document.getElementById('qa-chain-tab').value);
+                GM_setValue('qaChainMinLvl', numOrNull('qa-chain-minlvl'));
+                GM_setValue('qaChainMaxLvl', numOrNull('qa-chain-maxlvl'));
+                GM_setValue('qaChainMinFF', numOrNull('qa-chain-minff'));
+                GM_setValue('qaChainMaxFF', numOrNull('qa-chain-maxff'));
+                GM_setValue('qaChainInactive', document.getElementById('qa-chain-inactive').checked);
+                GM_setValue('qaChainFactionless', document.getElementById('qa-chain-factionless').checked);
+
+                PAGE_CONFIG.forEach(cfg => {
+                    const el = document.getElementById(cfg.id);
+                    if (el) GM_setValue(cfg.key, el.checked);
+                });
+
+                const msg = document.getElementById('qa-panel-saved-msg');
+                msg.style.display = 'inline-block';
+                setTimeout(() => { location.reload(); }, 1200);
+            };
+        }
+    }
+
+    function updateTableColumnHeadersAndCells(targetXid = null) {
+        const saved = GM_getValue('qaFilterSettings', { colDisplay: 'fair_fight' });
+        const displayMode = saved.colDisplay || 'fair_fight';
+
+        const headerRows = document.querySelectorAll('.table-header, .members-list .table-header, .faction-war .white-grad, tr.title');
+        headerRows.forEach(headerRow => {
+            if (headerRow.closest('#qa-filter-controls-box')) return;
+
+            const isRankedWar = headerRow.closest('.faction-war, [class*="factionWar"], [class*="rankedWar"], #faction_war_list_id') ||
+                                window.location.href.includes("war.php");
+
+            let lvlHeader = headerRow.querySelector('.lvl, .level, [class*="level"]');
+            if (!lvlHeader) return;
+
+            let extraHeader = headerRow.querySelector('.qa-col-header');
+            if (displayMode === 'none' || isRankedWar) {
+                if (extraHeader) extraHeader.remove();
+            } else {
+                if (!extraHeader) {
+                    extraHeader = document.createElement('div');
+                    extraHeader.className = 'qa-col-header';
+                    extraHeader.title = "Click to Toggle Sort (High-to-Low / Low-to-High / Default)";
+                    lvlHeader.parentNode.insertBefore(extraHeader, lvlHeader.nextSibling);
+                }
+
+                extraHeader.innerText = displayMode === 'fair_fight' ? 'FF' : 'Est';
+
+                extraHeader.onclick = (e) => {
+                    e.preventDefault(); e.stopPropagation();
+
+                    let currentMode = saved.sortBy || 'none';
+                    if (displayMode === 'fair_fight') {
+                        if (currentMode === 'none' || !currentMode.startsWith('ff')) currentMode = 'ff-desc';
+                        else if (currentMode === 'ff-desc') currentMode = 'ff-asc';
+                        else currentMode = 'none';
+                    } else if (displayMode === 'battle_stats') {
+                        if (currentMode === 'none' || !currentMode.startsWith('stats')) currentMode = 'stats-desc';
+                        else if (currentMode === 'stats-desc') currentMode = 'stats-asc';
+                        else currentMode = 'none';
+                    }
+
+                    saved.sortBy = currentMode;
+                    GM_setValue('qaFilterSettings', saved);
+
+                    const sortBtn = document.getElementById('qa-sort-toggle-btn');
+                    if (sortBtn) {
+                        if (currentMode === 'none') sortBtn.innerText = "Sort: Default";
+                        else if (currentMode === 'stats-desc') sortBtn.innerText = "Sort: Stats ▼";
+                        else if (currentMode === 'stats-asc') sortBtn.innerText = "Sort: Stats ▲";
+                        else if (currentMode === 'ff-desc') sortBtn.innerText = "Sort: FF ▼";
+                        else if (currentMode === 'ff-asc') sortBtn.innerText = "Sort: FF ▲";
+                    }
+
+                    const filterBox = document.getElementById('qa-filter-controls-box');
+                    if (filterBox && filterBox.applyCurrentFilters) {
+                        filterBox.applyCurrentFilters();
+                    }
+                };
+            }
+        });
+
+        const primaryRowSelector = '.table-row, tr, li.enemy, li.your, .faction-war .members-list > li, .faction-names .members-list > li';
+        const rows = document.querySelectorAll(primaryRowSelector);
+
+        rows.forEach(row => {
+            if (row.closest('#qa-filter-controls-box')) return;
+
+            const isRankedWar = row.closest('.faction-war, [class*="factionWar"], [class*="rankedWar"], #faction_war_list_id') ||
+                                window.location.href.includes("war.php");
+
+            const link = row.querySelector('a[href*="profiles.php?XID="]');
+            const xid = getPlayerIdFromLink(link);
+            if (!xid) return;
+            if (targetXid && String(xid) !== String(targetXid)) return;
+
+            let lvlCell = row.querySelector('.lvl, .level, [class*="level__"]');
+            if (!lvlCell) return;
+
+            let extraCell = row.querySelector(`.qa-col-cell-${xid}`);
+            if (displayMode === 'none' || isRankedWar) {
+                if (extraCell) extraCell.remove();
+                return;
+            }
+
+            if (!extraCell) {
+                extraCell = document.createElement('div');
+                extraCell.className = `qa-col-cell qa-col-cell-${xid}`;
+                extraCell.title = "Click to Quick Attack";
+                extraCell.onclick = (e) => {
+                    e.preventDefault(); e.stopPropagation();
+                    dismissKeyboard();
+                    window.open(`https://www.torn.com/page.php?sid=attack&user2ID=${xid}`, '_blank');
+                };
+                lvlCell.parentNode.insertBefore(extraCell, lvlCell.nextSibling);
+            }
+
+            const data = statCache[String(xid)];
+            if (data) {
+                let cellText = '-';
+                if (displayMode === 'fair_fight') {
+                    cellText = data.ffValue != null ? data.ffValue.toFixed(2) : 'N/A';
+                } else if (displayMode === 'battle_stats') {
+                    cellText = data.statStr || 'N/A';
+                }
+
+                extraCell.style.position = 'relative';
+                if (data.isSpy && displayMode === 'battle_stats') {
+                    extraCell.innerHTML = `${cellText}<img src="https://i.ibb.co/23TYRyL/star-v2.png" style="position: absolute; top: -6px; right: -6px; width: 13px; height: 13px; z-index: 101;">`;
+                } else {
+                    extraCell.innerText = cellText;
+                }
+
+                const bgColor = badgeColorForFF(data.ffValue);
+                extraCell.style.backgroundColor = bgColor;
+                extraCell.style.color = getContrastColor(bgColor);
+            } else {
+                extraCell.innerText = '...';
+                extraCell.style.backgroundColor = '#444';
+                extraCell.style.color = '#fff';
+                scheduleFetch(xid);
+            }
+        });
+    }
+
+    // Wiki: base respect is linear, 1.00 at level 1 to 1.50 at level 100.
+// Past hit 10, a chain scale multiplier of 0.25 * log10(chain) + 0.75 applies.
+
+function getLiveChainLength() {
+    const chainEl = document.querySelector('.chain-value, [class*="chainValue"], [class*="counter-chain"]');
+    if (chainEl) {
+        const val = parseInt(chainEl.innerText.replace(/,/g, ''));
+        if (!isNaN(val)) return val;
+    }
+    return parseInt(GM_getValue('qaChainLength', 0)) || 0;
+}
+
+function estRespect(level, ff) {
+    if (!level || ff == null || isNaN(ff)) return null;
+
+    // Base respect: 1.00 at level 1 to 1.50 at level 100[cite: 1].
+    const base = Math.floor((1 + (Math.min(level, 100) / 200)) * 100) / 100;
+
+    // Fair Fight multiplier: capped at 3x[cite: 1].
+    const fairFight = Math.min(Math.max(ff, 1), 3);
+
+    // Automatically grab live chain length instead of relying only on stored memory
+    const chain = getLiveChainLength();
+    const chainScale = chain > 10
+        ? 0.25 * Math.log10(chain) + 0.75
+        : 1;
+
+    // Ranked War opponents receive the 2x warring bonus[cite: 1].
+    const warringMultiplier = 2;
+
+    return base * fairFight * chainScale * warringMultiplier;
+}
+
+function updateWarRespectColumn(targetXid = null) {
+    const url = window.location.href;
+    const inWar = url.includes('war.php') || url.includes('war/') ||
+                  document.querySelector('.faction-war, #faction_war_list_id');
+    if (!inWar) return;
+
+    document.querySelectorAll('.faction-names .attack, .faction-war .attack, #faction_war_list_id .attack').forEach(cell => {
+        if (cell.parentElement && cell.parentElement.closest('.qa-resp-host')) return;
+
+let row = cell.parentElement, xid = null;
+for (let i = 0; i < 4 && row && row !== document.body; i++) {
+    const links = row.querySelectorAll('a[href*="profiles.php?XID="]');
+    if (links.length === 1) { xid = getPlayerIdFromLink(links[0]); break; }
+    if (links.length > 1) break;     // reached a container: this cell is the header
+    row = row.parentElement;
+}
+
+        // Header cell: rename the column
+        if (!xid) {
+            if (cell.textContent.trim() !== 'Resp') cell.textContent = 'Resp';
+            return;
+        }
+        if (targetXid && String(xid) !== String(targetXid)) return;
+
+        cell.classList.add('qa-resp-host');
+        let chip = cell.querySelector(':scope > .qa-resp');
+        if (!chip) {
+            chip = document.createElement('span');
+            chip.className = 'qa-resp';
+            chip.title = 'Estimated respect gain (tap to attack)';
+            chip.onclick = (e) => {
+                e.preventDefault(); e.stopPropagation();
+                dismissKeyboard();
+                window.open(`https://www.torn.com/page.php?sid=attack&user2ID=${xid}`, '_blank');
+            };
+            cell.appendChild(chip);
+        }
+
+        const data = statCache[String(xid)];
+        const lvlEl = row.querySelector('.lvl, .level, [class*="level__"]');
+        const level = lvlEl ? parseInt(lvlEl.innerText) : 0;
+        const r = data ? estRespect(level, data.ffValue) : null;
+
+        let text, bg;
+        if (r == null) {
+            text = data ? 'N/A' : '...';
+            bg = '#444';
+            if (!data) scheduleFetch(xid);
+        } else {
+            text = r.toFixed(2);
+            bg = r >= 3.5 ? '#2ea043' : r >= 2.5 ? '#8bc34a' : r >= 1.5 ? '#e0b020' : '#555';
+        }
+        if (chip.textContent !== text) chip.textContent = text;
+        chip.style.backgroundColor = bg;
+        chip.style.color = getContrastColor(bg);
+    });
+}
+// ---------- Hospital timers + status sort ----------
+const hospUntil = {};
+let tornSkewMs = 0;
+let hospWatcherStarted = false;
+const tornNowMs = () => Date.now() + tornSkewMs;
+
+function fmtHosp(s) {
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+}
+
+function getWarFactionIds() {
+    const ids = [];
+    document.querySelectorAll('ul.members-list').forEach(list => {
+        const a = list.querySelector("a[href^='/factions.php']");
+        if (!a) return;
+        try {
+            const id = new URL(a.href, 'https://www.torn.com').searchParams.get('ID');
+            if (id && !ids.includes(id)) ids.push(id);
+        } catch (e) {}
+    });
+    return ids;
+}
+
+function resortNow() {
+    const saved = GM_getValue('qaFilterSettings', {});
+    if (saved.statusSort === false) return;
+    const fb = document.getElementById('qa-filter-controls-box');
+    if (fb && fb.applyCurrentFilters) fb.applyCurrentFilters();
+}
+
+function fetchHospitalData(factionId) {
+    const key = getTornKey();
+    if (!key || key.length !== 16) return;
+    GM_xmlhttpRequest({
+        method: 'GET',
+        url: `https://api.torn.com/v2/faction?id=${factionId}&selections=members,timestamp&key=${key}&comment=QuickAttackHospital&timestamp=${Date.now() % 1000 + 10}`,
+        onload: function (r) {
+            try {
+                const data = JSON.parse(r.responseText);
+                if (data.error) return;
+                if (data.timestamp) tornSkewMs = data.timestamp * 1000 - Date.now();
+                const list = Array.isArray(data.members) ? data.members : Object.values(data.members || {});
+                list.forEach(m => {
+                    const st = m.status || {};
+                    hospUntil[String(m.id)] = (st.state === 'Hospital' || st.state === 'Jail') ? (st.until || 0) : 0;
+                });
+                refreshHospitalUi();
+                resortNow();
+            } catch (e) {}
+        }
+    });
+}
+
+function refreshHospitalUi() {
+    const nowSec = tornNowMs() / 1000;
+    document.querySelectorAll('ul.members-list li.enemy, ul.members-list li.your').forEach(li => {
+        const sd = li.querySelector('div.status');
+        if (!sd) return;
+        const xid = getPlayerIdFromLink(li.querySelector('a[href*="profiles.php?XID="]'));
+        const until = xid ? (hospUntil[xid] || 0) : 0;
+        const remaining = until ? Math.round(until - nowSec) : 0;
+        const isHosp = sd.classList.contains('hospital') || sd.classList.contains('jail');
+        if (isHosp && remaining > 0) {
+            sd.style.setProperty('--qa-content', `"${fmtHosp(remaining)}"`);
+            sd.setAttribute('data-qa-hosp', remaining < 300 ? 'soon' : 'true');
+        } else if (sd.hasAttribute('data-qa-hosp')) {
+            sd.removeAttribute('data-qa-hosp');
+            sd.style.removeProperty('--qa-content');
+        }
+    });
+}
+
+function startHospitalWatcher() {
+    if (hospWatcherStarted) return;
+    hospWatcherStarted = true;
+    const poll = () => { if (!document.hidden) getWarFactionIds().forEach(fetchHospitalData); };
+    poll();
+    setInterval(poll, 10000);
+    setInterval(refreshHospitalUi, 1000);
+    setInterval(() => { if (!document.hidden) resortNow(); }, 5000);
+}
+
+// Groups: 0 Okay, 1 Hospital/Jail (until = seconds), 2 Abroad, 3 Traveling, 4 other, 5 no status cell
+function getStatusInfo(row) {
+    const sd = row.querySelector('div.status');
+    if (!sd) return { g: 5 };
+    const xid = getPlayerIdFromLink(row.querySelector('a[href*="profiles.php?XID="]'));
+    const until = xid ? (hospUntil[xid] || 0) : 0;
+    if (sd.classList.contains('hospital') || sd.classList.contains('jail')) {
+        if (until && until <= tornNowMs() / 1000) return { g: 0 }; // already out
+        return { g: 1, until: until || Infinity };
+    }
+    if (sd.classList.contains('abroad')) return { g: 2 };
+    if (sd.classList.contains('traveling')) return { g: 3 };
+    if ((sd.textContent || '').trim() === 'Okay') return { g: 0 };
+    return { g: 4 };
+}
+
+function tbsOfRow(row) {
+    const xid = getPlayerIdFromLink(row.querySelector('a[href*="profiles.php?XID="]'));
+    const d = xid ? statCache[String(xid)] : null;
+    return d ? (parseStatValue(d.statStr) || 0) : 0;
+}
+// ---------- end hospital ----------
+    function injectFilterBox() {
+        const url = window.location.href;
+        const isFaction = url.includes("factions.php");
+        const isWar = url.includes("war.php");
+
+        if (!isFaction && !isWar) return;
+        if (document.getElementById('qa-filter-controls-box')) return;
+
+        if (isFaction && !getSetting('showFactionFilter', true)) return;
+        if (isWar && !getSetting('showWarFilter', true)) return;
+
+        let targetContainer = null;
+        if (isWar) {
+            targetContainer = document.querySelector('.faction-names') || document.querySelector('.tab-menu-cont');
+        } else {
+            if (window.location.hash.includes('war/')) {
+                targetContainer = document.querySelector(".act[class*='warListItem__'] ~ .descriptions .faction-war") || document.querySelector('.descriptions .faction-war');
+            } else {
+                targetContainer = document.querySelector('.members-list');
+            }
+        }
+
+        if (!targetContainer || !targetContainer.parentNode) return;
+
+        const saved = GM_getValue('qaFilterSettings', {
+            sortBy: 'none',
+            colDisplay: 'fair_fight',
+            lvlMin: '', lvlMax: '',
+            ffMin: '', ffMax: '',
+            statsMin: '', statsMax: '',
+            actOnline: true, actIdle: true, actOffline: true,
+            stOkay: true, stHsp: true, stJail: true, stTravel: true, stAbroad: true,
+            isOpen: true,
+            filterEnabled: true
+        });
+
+        const filterBox = document.createElement('details');
+        filterBox.id = 'qa-filter-controls-box';
+        filterBox.className = 'qa-filter-box';
+        filterBox.open = saved.isOpen !== false;
+
+        const isRankedWarUI = isWar || window.location.hash.includes('war/');
+
+        filterBox.innerHTML = `
+            <summary>
+                <div class="qa-filter-header-content">
+                    <span>FF Filter & Sort</span>
+                    <div class="qa-filter-header-actions" onclick="event.preventDefault(); event.stopPropagation();">
+                        <button type="button" id="qa-btn-toggle-filter" class="qa-action-btn" title="Toggle Filtering">
+                            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M1.5 1.5A.5.5 0 0 1 2 1h12a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-.124.318l-4.5 5.5v4.682a.5.5 0 0 1-.168.373l-2.5 2a.5.5 0 0 1-.832-.373v-6.682l-4.5-5.5A.5.5 0 0 1 1.5 3.5v-2z"/></svg>
+                        </button>
+                        <button type="button" id="qa-btn-reset-filter" class="qa-action-btn" title="Reset Filters">
+                            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/><path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <div id="qa-preset-bar" class="qa-preset-bar"></div>
+            </summary>
+                        <div class="qa-filter-grid">
+                <div class="qa-filter-group">
+                    <strong>Sort & Display</strong>
+                    <button type="button" id="qa-sort-toggle-btn" class="qa-btn-sort">Sort: Default</button>
+                    <select id="qa-col-display" class="qa-select">
+                        <option value="fair_fight" ${saved.colDisplay === 'fair_fight' ? 'selected' : ''}>Show: FF Score</option>
+                        <option value="battle_stats" ${saved.colDisplay === 'battle_stats' ? 'selected' : ''}>Show: BS Estimate</option>
+                        <option value="none" ${saved.colDisplay === 'none' ? 'selected' : ''}>Show: None (Hide)</option>
+                    </select>
+                </div>
+                <div class="qa-filter-group">
+                    <strong>Level Range</strong>
+                    <div class="qa-range-inputs">
+                        <input type="number" id="qa-lvl-min" placeholder="Min" value="${saved.lvlMin || ''}">
+                        <span>to</span>
+                        <input type="number" id="qa-lvl-max" placeholder="Max" value="${saved.lvlMax || ''}">
+                    </div>
+                </div>
+                <div class="qa-filter-group">
+                    <div class="qa-filter-split">
+                        <div>
+                            <strong>Activity</strong>
+                            <div class="qa-filter-options">
+                                <label><input type="checkbox" id="qa-act-online" ${saved.actOnline !== false ? 'checked' : ''}> Online</label>
+                                <label><input type="checkbox" id="qa-act-idle" ${saved.actIdle !== false ? 'checked' : ''}> Idle</label>
+                                <label><input type="checkbox" id="qa-act-offline" ${saved.actOffline !== false ? 'checked' : ''}> Offline</label>
+                            </div>
+                        </div>
+                        <div>
+                            <strong>Status</strong>
+                            <div class="qa-filter-options">
+                                <label><input type="checkbox" id="qa-st-okay" ${saved.stOkay !== false ? 'checked' : ''}> Okay</label>
+                                <label><input type="checkbox" id="qa-st-hsp" ${saved.stHsp !== false ? 'checked' : ''}> Hospital</label>
+                                ${!isRankedWarUI ? `<label><input type="checkbox" id="qa-st-jail" ${saved.stJail !== false ? 'checked' : ''}> Jail</label>` : ''}
+                                <label><input type="checkbox" id="qa-st-travel" ${saved.stTravel !== false ? 'checked' : ''}> Traveling</label>
+                                <label><input type="checkbox" id="qa-st-abroad" ${saved.stAbroad !== false ? 'checked' : ''}> Abroad</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                                <div class="qa-filter-group">
+                    <strong>Chain Length</strong>
+                    <div class="qa-range-inputs">
+                        <input type="number" id="qa-chain-len" placeholder="0" value="${GM_getValue('qaChainLength', 0) || ''}">
+                    </div>
+                </div>
+                <div class="qa-filter-group">
+                    <strong>FF Range</strong>
+                    <div class="qa-range-inputs">
+                        <input type="number" step="0.1" id="qa-ff-min" placeholder="Min" value="${saved.ffMin || ''}">
+                        <span>to</span>
+                        <input type="number" step="0.1" id="qa-ff-max" placeholder="Max" value="${saved.ffMax || ''}">
+                    </div>
+                </div>
+                                <div class="qa-filter-group">
+                    <strong>Status Sort</strong>
+                    <div class="qa-filter-options">
+                        <label><input type="checkbox" id="qa-status-sort" ${saved.statusSort !== false ? 'checked' : ''}> Okay → Hospital → Travel</label>
+                        <label><input type="checkbox" id="qa-okay-tbs" ${saved.okayByTbs === true ? 'checked' : ''}> Sort Okay by TBS</label>
+                    </div>
+                </div>
+                <div class="qa-filter-group">
+                    <strong>Stats Range</strong>
+                    <div class="qa-range-inputs">
+                        <input type="text" id="qa-stats-min" placeholder="Min" value="${saved.statsMin || ''}">
+                        <span>to</span>
+                        <input type="text" id="qa-stats-max" placeholder="Max" value="${saved.statsMax || ''}">
+                    </div>
+                </div>
+            </div>
+        `.replace(/[\u00A0\u2000-\u200B]/g, ' ');
+
+        targetContainer.parentNode.insertBefore(filterBox, targetContainer);
+
+        let currentSortMode = saved.sortBy || 'none';
+        let filterEnabled = saved.filterEnabled !== false;
+
+        function updateSortButtonLabel() {
+            const btn = document.getElementById('qa-sort-toggle-btn');
+            if (!btn) return;
+            if (currentSortMode === 'none') btn.innerText = "Sort: Default";
+            else if (currentSortMode === 'stats-desc') btn.innerText = "Sort: Stats ▼";
+            else if (currentSortMode === 'stats-asc') btn.innerText = "Sort: Stats ▲";
+            else if (currentSortMode === 'ff-desc') btn.innerText = "Sort: FF ▼";
+            else if (currentSortMode === 'ff-asc') btn.innerText = "Sort: FF ▲";
+        }
+
+        updateSortButtonLabel();
+
+        document.getElementById('qa-sort-toggle-btn').onclick = () => {
+            if (currentSortMode === 'none') currentSortMode = 'stats-desc';
+            else if (currentSortMode === 'stats-desc') currentSortMode = 'stats-asc';
+            else if (currentSortMode === 'stats-asc') currentSortMode = 'ff-desc';
+            else if (currentSortMode === 'ff-desc') currentSortMode = 'ff-asc';
+            else currentSortMode = 'none';
+
+            updateSortButtonLabel();
+            saveAndApplyFilters();
+        };
+
+        document.getElementById('qa-btn-toggle-filter').onclick = (e) => {
+            e.preventDefault(); e.stopPropagation();
+            filterEnabled = !filterEnabled;
+            saveAndApplyFilters();
+        };
+
+        document.getElementById('qa-btn-reset-filter').onclick = (e) => {
+            e.preventDefault(); e.stopPropagation();
+            document.getElementById('qa-lvl-min').value = '';
+            document.getElementById('qa-lvl-max').value = '';
+            document.getElementById('qa-ff-min').value = '';
+            document.getElementById('qa-ff-max').value = '';
+            document.getElementById('qa-stats-min').value = '';
+            document.getElementById('qa-stats-max').value = '';
+
+              ['qa-act-online', 'qa-act-idle', 'qa-act-offline', 'qa-st-okay', 'qa-st-hsp', 'qa-st-jail', 'qa-st-travel', 'qa-st-abroad'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.checked = true;
+            });
+
+            currentSortMode = 'none';
+            updateSortButtonLabel();
+            filterEnabled = true;
+            saveAndApplyFilters();
+        };
+
+        function saveAndApplyFilters() {
+            const currentSettings = {
+                sortBy: currentSortMode,
+                colDisplay: document.getElementById('qa-col-display').value,
+                lvlMin: document.getElementById('qa-lvl-min').value,
+                lvlMax: document.getElementById('qa-lvl-max').value,
+                ffMin: document.getElementById('qa-ff-min').value,
+                ffMax: document.getElementById('qa-ff-max').value,
+                statsMin: document.getElementById('qa-stats-min').value,
+                statsMax: document.getElementById('qa-stats-max').value,
+                actOnline: document.getElementById('qa-act-online').checked,
+                actIdle: document.getElementById('qa-act-idle').checked,
+                actOffline: document.getElementById('qa-act-offline').checked,
+                stOkay: document.getElementById('qa-st-okay').checked,
+                stHsp: document.getElementById('qa-st-hsp').checked,
+                stJail: document.getElementById('qa-st-jail')?.checked ?? true,
+                stTravel: document.getElementById('qa-st-travel').checked,
+                stAbroad: document.getElementById('qa-st-abroad').checked,
+                statusSort: document.getElementById('qa-status-sort')?.checked ?? true,
+                okayByTbs: document.getElementById('qa-okay-tbs')?.checked ?? false,
+                isOpen: filterBox.open,
+                filterEnabled: filterEnabled
+            };
+
+            GM_setValue('qaFilterSettings', currentSettings);
+            const statusSortOn = currentSettings.statusSort;
+            const okayByTbs = currentSettings.okayByTbs;
+
+            // --- Update filter toggle button SVG (Funnel vs Funnel with X) ---
+            const toggleBtn = document.getElementById('qa-btn-toggle-filter');
+            if (toggleBtn) {
+                if (filterEnabled) {
+                    toggleBtn.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M1.5 1.5A.5.5 0 0 1 2 1h12a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-.124.318l-4.5 5.5v4.682a.5.5 0 0 1-.168.373l-2.5 2a.5.5 0 0 1-.832-.373v-6.682l-4.5-5.5A.5.5 0 0 1 1.5 3.5v-2z"/></svg>';
+                } else {
+                    toggleBtn.innerHTML = '<svg viewBox="0 0 256 256" width="14" height="14" fill="currentColor"><path d="M227.73,66.85,160,139.17v55.49A16,16,0,0,1,152.87,208l-32,21.34A16,16,0,0,1,96,216V139.17L28.27,66.85l-.08-.09A16,16,0,0,1,40,40H216a16,16,0,0,1,11.84,26.76ZM227.31,192l18.35-18.34a8,8,0,0,0-11.32-11.32L216,180.69l-18.34-18.35a8,8,0,0,0-11.32,11.32L204.69,192l-18.35,18.34a8,8,0,0,0,11.32,11.32L216,203.31l18.34,18.35a8,8,0,0,0,11.32-11.32Z"/></svg>';
+                }
+            }
+            // ----------------------------------------------------------------------
+
+            updateTableColumnHeadersAndCells();
+
+            const primaryRowSelector = '.table-row, tr, li.enemy, li.your, .faction-war .members-list > li, .faction-names .members-list > li';
+            const rows = document.querySelectorAll(primaryRowSelector);
+
+            rows.forEach(row => {
+                if (row.closest('#qa-filter-controls-box')) return;
+
+                if (!filterEnabled) {
+                    row.removeAttribute('data-qa-hidden');
+                    let next = row.nextElementSibling;
+                    while(next && !next.matches(primaryRowSelector)) {
+                        next.removeAttribute('data-qa-hidden');
+                        next = next.nextElementSibling;
+                    }
+                    return;
+                }
+
+                const text = row.innerText.toLowerCase();
+                let show = true;
+
+                const actStatus = getActivityStatus(row);
+                if (actStatus === 'online' && !currentSettings.actOnline) show = false;
+                if (actStatus === 'idle' && !currentSettings.actIdle) show = false;
+                if (actStatus === 'offline' && !currentSettings.actOffline) show = false;
+
+                if (text.includes('hospital') && !currentSettings.stHsp) show = false;
+                if (text.includes('jail') && !currentSettings.stJail) show = false;
+                if (text.includes('traveling') && !currentSettings.stTravel) show = false;
+                if (text.includes('abroad') && !currentSettings.stAbroad) show = false;
+                if (text.includes('okay') && !currentSettings.stOkay) show = false;
+
+                // Catch Ranked War hospital timers (e.g. 01:32:42)
+                if (/\d{2}:\d{2}:\d{2}/.test(text) && !text.includes('okay') && !currentSettings.stHsp) show = false;
+
+                const minLvl = parseInt(currentSettings.lvlMin) || 0;
+                const maxLvl = parseInt(currentSettings.lvlMax) || 999;
+                const lvlCell = row.querySelector('.lvl, .level');
+                if (lvlCell) {
+                    const lvlVal = parseInt(lvlCell.innerText) || 0;
+                    if (lvlVal < minLvl || lvlVal > maxLvl) show = false;
+                }
+
+                const minFF = parseFloat(currentSettings.ffMin);
+                const maxFF = parseFloat(currentSettings.ffMax);
+                const minStats = parseStatValue(currentSettings.statsMin);
+                const maxStats = parseStatValue(currentSettings.statsMax);
+
+                const link = row.querySelector('a[href*="profiles.php?XID="]');
+                const xid = getPlayerIdFromLink(link);
+                const data = xid ? statCache[String(xid)] : null;
+
+                if (!isNaN(minFF) || !isNaN(maxFF)) {
+                    let ffVal = parseFloat(row.dataset.ffValue);
+                    if (isNaN(ffVal) && data) ffVal = data.ffValue;
+                    if (!isNaN(ffVal)) {
+                        if (!isNaN(minFF) && ffVal < minFF) show = false;
+                        if (!isNaN(maxFF) && ffVal > maxFF) show = false;
+                    }
+                }
+
+                if (minStats !== null || maxStats !== null) {
+                    let statNum = data ? parseStatValue(data.statStr) : null;
+                    if (statNum !== null) {
+                        if (minStats !== null && statNum < minStats) show = false;
+                        if (maxStats !== null && statNum > maxStats) show = false;
+                    }
+                }
+
+                if (show) {
+                    row.removeAttribute('data-qa-hidden');
+                    let next = row.nextElementSibling;
+                    while(next && !next.matches(primaryRowSelector)) {
+                        next.removeAttribute('data-qa-hidden');
+                        next = next.nextElementSibling;
+                    }
+                } else {
+                    row.setAttribute('data-qa-hidden', 'true');
+                    let next = row.nextElementSibling;
+                    while(next && !next.matches(primaryRowSelector)) {
+                        next.setAttribute('data-qa-hidden', 'true');
+                        next = next.nextElementSibling;
+                    }
+                }
+            });
+
+            if (currentSortMode !== 'none' || statusSortOn) {
+                const rowArray = Array.from(rows).filter(r => !r.closest('#qa-filter-controls-box') && !r.classList.contains('title') && !r.classList.contains('table-header'));
+
+                const rowsByParent = new Map();
+                rowArray.forEach(r => {
+                    const parent = r.parentNode;
+                    if (!parent) return;
+                    if (!rowsByParent.has(parent)) rowsByParent.set(parent, []);
+                    rowsByParent.get(parent).push(r);
+                });
+
+                rowsByParent.forEach((groupRows, parent) => {
+                    groupRows.sort((a, b) => {
+                        if (statusSortOn) {
+                            const sa = getStatusInfo(a), sb = getStatusInfo(b);
+                            if (sa.g !== sb.g) return sa.g - sb.g;
+                            if (sa.g === 1 && sa.until !== sb.until) return sa.until - sb.until;
+                            if (sa.g === 0 && okayByTbs) {
+                                const d = tbsOfRow(b) - tbsOfRow(a);
+                                if (d !== 0) return d;
+                            }
+                        }
+                        if (currentSortMode === 'none') return 0;
+                        let valA = 0, valB = 0;
+                        const xidA = getPlayerIdFromLink(a.querySelector('a[href*="profiles.php?XID="]'));
+                        const xidB = getPlayerIdFromLink(b.querySelector('a[href*="profiles.php?XID="]'));
+
+                        const dataA = xidA ? statCache[String(xidA)] : null;
+                        const dataB = xidB ? statCache[String(xidB)] : null;
+
+                        if (currentSortMode.startsWith('stats')) {
+                            valA = dataA ? (parseStatValue(dataA.statStr) || 0) : 0;
+                            valB = dataB ? (parseStatValue(dataB.statStr) || 0) : 0;
+                        } else if (currentSortMode.startsWith('ff')) {
+                            valA = dataA ? (dataA.ffValue || 0) : 0;
+                            valB = dataB ? (dataB.ffValue || 0) : 0;
+                        }
+                        return currentSortMode.endsWith('asc') ? valA - valB : valB - valA;
+                    });
+
+                    groupRows.forEach(r => {
+                        const extraRows = [];
+                        let next = r.nextElementSibling;
+                        while (next && !next.matches(primaryRowSelector)) {
+                            extraRows.push(next);
+                            next = next.nextElementSibling;
+                        }
+
+                        parent.appendChild(r);
+                        extraRows.forEach(ex => parent.appendChild(ex));
+                    });
+                });
+            }
+        }
+// ---------- Presets (header chips) ----------
+const VALUE_IDS = {
+    lvlMin: 'qa-lvl-min', lvlMax: 'qa-lvl-max', ffMin: 'qa-ff-min', ffMax: 'qa-ff-max',
+    statsMin: 'qa-stats-min', statsMax: 'qa-stats-max'
+};
+const CHECK_IDS = {
+    actOnline: 'qa-act-online', actIdle: 'qa-act-idle', actOffline: 'qa-act-offline',
+    stOkay: 'qa-st-okay', stHsp: 'qa-st-hsp', stJail: 'qa-st-jail',
+    stTravel: 'qa-st-travel', stAbroad: 'qa-st-abroad'
+};
+const presetBar = document.getElementById('qa-preset-bar');
+const getCustomPresets = () => {
+    try {
+        let v = GM_getValue('qaFilterPresets', {});
+        if (typeof v === 'string') v = JSON.parse(v);
+        return (v && typeof v === 'object' && !Array.isArray(v) && typeof v.then !== 'function') ? v : {};
+    } catch (e) { return {}; }
+};
+        // One-time: copy built-in presets into saved presets so they're fully editable
+try {
+    if (!GM_getValue('qaPresetsSeeded', false)) {
+        const existing = getCustomPresets();
+        const seeded = {};
+        Object.keys(BUILTIN_FILTER_PRESETS).forEach(n => {
+            seeded[n] = Object.assign({}, FILTER_DEFAULTS, BUILTIN_FILTER_PRESETS[n]);
+        });
+        Object.assign(seeded, existing);
+        GM_setValue('qaFilterPresets', seeded);
+        GM_setValue('qaPresetsSeeded', true);
+    }
+} catch (e) { /* seeding is optional */ }
+let activePreset = '';
+        let editMode = false;
+const getHidden = () => GM_getValue('qaHiddenPresets', []);
+
+// Keep header clicks from toggling the collapsible box
+presetBar.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); });
+
+function makeChip(label, key, extraClass = '') {
+    const chip = document.createElement('span');
+    chip.className = 'qa-preset-chip ' + extraClass + (key && key === activePreset ? ' qa-on' : '');
+    chip.textContent = label;
+    return chip;
+}
+
+function makeIcon(symbol, title, handler) {
+    const s = document.createElement('span');
+    s.className = 'qa-preset-x';
+    s.textContent = symbol;
+    s.title = title;
+    s.onclick = (e) => { e.preventDefault(); e.stopPropagation(); handler(); };
+    return s;
+}
+
+function renderPresetBar() {
+    presetBar.innerHTML = '';
+
+    Object.keys(getCustomPresets()).forEach(name => {
+        const chip = makeChip(name, 'c:' + name);
+        chip.onclick = () => {
+            const p = getCustomPresets()[name];
+            if (!p) return;
+            activePreset = 'c:' + name;
+            applyPreset(p);
+            renderPresetBar();
+        };
+        if (editMode) {
+            chip.appendChild(makeIcon('✎', 'Rename', () => {
+                const renamed = (prompt('Rename preset:', name) || '').trim().slice(0, 24);
+                if (!renamed || renamed === name) return;
+                const custom = getCustomPresets();
+                if (custom[renamed]) { alert('That name is already used.'); return; }
+                const next = {};
+                Object.keys(custom).forEach(k => { next[k === name ? renamed : k] = custom[k]; });
+                GM_setValue('qaFilterPresets', next);
+                if (activePreset === 'c:' + name) activePreset = 'c:' + renamed;
+                renderPresetBar();
+            }));
+            chip.appendChild(makeIcon('↻', 'Replace with current filters', () => {
+                if (!confirm(`Replace "${name}" with the current filters?`)) return;
+                const custom = getCustomPresets();
+                custom[name] = snapshotFilters();
+                GM_setValue('qaFilterPresets', custom);
+                activePreset = 'c:' + name;
+                renderPresetBar();
+            }));
+            chip.appendChild(makeIcon('×', 'Delete', () => {
+                if (!confirm(`Delete "${name}"?`)) return;
+                const custom = getCustomPresets();
+                delete custom[name];
+                GM_setValue('qaFilterPresets', custom);
+                if (activePreset === 'c:' + name) activePreset = '';
+                renderPresetBar();
+            }));
+        }
+        presetBar.appendChild(chip);
+    });
+
+    const add = makeChip('+ Save', '', 'qa-add');
+    add.title = 'Save current filters as a preset';
+    add.onclick = () => {
+        const current = activePreset.startsWith('c:') ? activePreset.slice(2) : '';
+        const name = (prompt('Name for this preset:', current) || '').trim().slice(0, 24);
+        if (!name) return;
+        const custom = getCustomPresets();
+        if (custom[name] && !confirm(`Overwrite "${name}"?`)) return;
+        custom[name] = snapshotFilters();
+        GM_setValue('qaFilterPresets', custom);
+        activePreset = 'c:' + name;
+        renderPresetBar();
+    };
+    presetBar.appendChild(add);
+
+    const edit = makeChip(editMode ? 'Done' : '✎ Edit', '', 'qa-add' + (editMode ? ' qa-on' : ''));
+    edit.onclick = () => { editMode = !editMode; renderPresetBar(); };
+    presetBar.appendChild(edit);
+}
+
+function snapshotFilters() {
+    const p = { sortBy: currentSortMode, colDisplay: document.getElementById('qa-col-display').value };
+    Object.entries(VALUE_IDS).forEach(([k, id]) => { p[k] = document.getElementById(id)?.value ?? ''; });
+    Object.entries(CHECK_IDS).forEach(([k, id]) => { p[k] = document.getElementById(id)?.checked ?? true; });
+    return p;
+}
+
+function applyPreset(p) {
+    const full = Object.assign({}, FILTER_DEFAULTS, p);
+    Object.entries(VALUE_IDS).forEach(([k, id]) => {
+        const el = document.getElementById(id);
+        if (el) el.value = full[k] ?? '';
+    });
+    Object.entries(CHECK_IDS).forEach(([k, id]) => {
+        const el = document.getElementById(id);
+        if (el) el.checked = full[k] !== false;
+    });
+    if (full.colDisplay) document.getElementById('qa-col-display').value = full.colDisplay;
+    currentSortMode = full.sortBy || 'none';
+    filterEnabled = true;
+    updateSortButtonLabel();
+    saveAndApplyFilters();
+}
+
+// Un-highlight the active chip when the user tweaks filters by hand
+function clearActivePreset() {
+    if (!activePreset) return;
+    activePreset = '';
+    renderPresetBar();
+}
+filterBox.querySelectorAll('.qa-filter-grid input, .qa-filter-grid select').forEach(el => {
+    el.addEventListener('change', clearActivePreset);
+});
+document.getElementById('qa-sort-toggle-btn').addEventListener('click', clearActivePreset);
+document.getElementById('qa-btn-reset-filter').addEventListener('click', clearActivePreset);
+
+try { renderPresetBar(); } catch (e) { presetBar.textContent = 'Presets error: ' + e.message; }
+// ---------- end presets ----------
+            const chainInput = document.getElementById('qa-chain-len');
+        if (chainInput) {
+            // Make the input read-only so it acts purely as a live indicator
+            chainInput.readOnly = true;
+            chainInput.style.backgroundColor = '#141414';
+            chainInput.style.color = '#e6c453'; // Gold color to stand out as a live counter
+            chainInput.style.fontWeight = 'bold';
+            chainInput.title = "Automatically tracked live chain length";
+
+            // Update the display value immediately and keep it synced
+            const updateCounter = () => {
+                const liveChain = getLiveChainLength();
+                if (parseInt(chainInput.value) !== liveChain) {
+                    chainInput.value = liveChain;
+                    GM_setValue('qaChainLength', liveChain);
+                    updateWarRespectColumn();
+                }
+            };
+
+            updateCounter();
+            setInterval(updateCounter, 1000);
+        }
+        filterBox.applyCurrentFilters = saveAndApplyFilters;
+        filterBox.addEventListener('toggle', saveAndApplyFilters);
+        filterBox.querySelectorAll('input, select:not(#qa-preset-select)').forEach(input => {
+            input.addEventListener('change', saveAndApplyFilters);
+            input.addEventListener('keyup', saveAndApplyFilters);
+        });
+
+        setTimeout(saveAndApplyFilters, 300);
+        startHospitalWatcher();
+    }
+
+    // ---------- Chain target button ----------
+    const CHAIN_REFRESH_MS = 24 * 60 * 60 * 1000;
+    let chainBusy = false;
+
+    function getChainFilters() {
+        return {
+            minlevel: GM_getValue('qaChainMinLvl', null),
+            maxlevel: GM_getValue('qaChainMaxLvl', null),
+            minff: GM_getValue('qaChainMinFF', null),
+            maxff: GM_getValue('qaChainMaxFF', 2.5),
+            inactive: GM_getValue('qaChainInactive', true),
+            factionless: GM_getValue('qaChainFactionless', false)
+        };
+    }
+
+    function chainStore() {
+        try {
+            let v = GM_getValue('qaChainTargets', null);
+            if (typeof v === 'string') v = JSON.parse(v);
+            return (v && Array.isArray(v.targets)) ? v : null;
+        } catch (e) { return null; }
+    }
+
+    function chainToast(msg) {
+        const old = document.getElementById('qa-chain-toast');
+        if (old) old.remove();
+        const t = document.createElement('div');
+        t.id = 'qa-chain-toast';
+        t.textContent = msg;
+        t.style.cssText = 'position:fixed;bottom:90px;left:50%;transform:translateX(-50%);background:#33238a;color:#fff;padding:8px 14px;border-radius:8px;font-size:13px;z-index:2147483647;box-shadow:0 2px 12px rgba(0,0,0,.4);max-width:80%;text-align:center;';
+        document.body.appendChild(t);
+        setTimeout(() => t.remove(), 3000);
+    }
+
+    function fetchChainTargets(force, done) {
+        const key = GM_getValue('ffApiKey', '');
+        if (!key) { if (done) done(false, 'No FF Scouter API key set'); return; }
+
+        const f = getChainFilters();
+        const store = chainStore();
+        const sameFilters = store && JSON.stringify(store.filters) === JSON.stringify(f);
+        const fresh = store && sameFilters && store.targets.length && (Date.now() - store.ts < CHAIN_REFRESH_MS);
+        if (!force && fresh) { if (done) done(true); return; }
+        if (chainBusy) return;
+        chainBusy = true;
+
+        const q = new URLSearchParams({ key });
+        if (f.minlevel != null) q.append('minlevel', f.minlevel);
+        if (f.maxlevel != null) q.append('maxlevel', f.maxlevel);
+        if (f.minff != null) q.append('minff', f.minff);
+        if (f.maxff != null) q.append('maxff', f.maxff);
+        q.append('inactiveonly', f.inactive ? 1 : 0);
+        q.append('factionless', f.factionless ? 1 : 0);
+        q.append('limit', 50);
+
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: `https://ffscouter.com/api/v1/get-targets?${q.toString()}`,
+            onload: function (r) {
+                chainBusy = false;
+                try {
+                    const data = JSON.parse(r.responseText);
+                    if (data.error) throw new Error(data.error);
+                    const targets = (data.targets || []).map(t => String(t.player_id)).filter(Boolean);
+                    GM_setValue('qaChainTargets', { targets, filters: f, ts: Date.now(), index: 0 });
+                    if (done) done(targets.length > 0, targets.length ? '' : 'No targets match your filters');
+                } catch (e) {
+                    if (done) done(false, e.message || 'Failed to load targets');
+                }
+            },
+            onerror: function () {
+                chainBusy = false;
+                if (done) done(false, 'Network error loading targets');
+            }
+        });
+    }
+
+    function takeChainTarget() {
+        const s = chainStore();
+        if (!s || !s.targets.length) return null;
+        const i = (s.index || 0) % s.targets.length;
+        const id = s.targets[i];
+        s.index = i + 1;
+        GM_setValue('qaChainTargets', s);
+        return { id, wrapped: s.index >= s.targets.length };
+    }
+
+    function openChainTarget(id) {
+        const url = GM_getValue('qaChainLink', 'attack') === 'profile'
+            ? `https://www.torn.com/profiles.php?XID=${id}`
+            : `https://www.torn.com/page.php?sid=attack&user2ID=${id}`;
+        if (GM_getValue('qaChainTab', 'newtab') === 'sametab') window.location.href = url;
+        else window.open(url, '_blank');
+    }
+
+    function createChainButton() {
+        const existing = document.getElementById('qa-chain-btn');
+        if (!GM_getValue('qaChainEnabled', true) || !GM_getValue('ffApiKey', '')) {
+            if (existing) existing.remove();
+            return;
+        }
+        if (existing || !document.body) return;
+
+        const btn = document.createElement('div');
+        btn.id = 'qa-chain-btn';
+        btn.textContent = 'FF';
+        btn.title = 'Next chain target';
+        btn.style.cssText = 'position:fixed;top:40%;right:0;z-index:9999;background:#2e8b3a;color:#fff;font-weight:bold;font-size:14px;padding:8px 10px;border-radius:6px 0 0 6px;cursor:pointer;user-select:none;box-shadow:-1px 1px 6px rgba(0,0,0,.4);';
+
+        btn.onclick = (e) => {
+            e.preventDefault(); e.stopPropagation();
+            dismissKeyboard();
+            const t = takeChainTarget();
+            if (!t) {
+                chainToast('Loading targets...');
+                fetchChainTargets(true, (ok, msg) => chainToast(ok ? 'Targets loaded - tap FF again' : msg));
+                return;
+            }
+            openChainTarget(t.id);
+            if (t.wrapped) fetchChainTargets(true);   // end of list: grab a fresh one in the background
+        };
+
+        document.body.appendChild(btn);
+    }
+
+    function startChainButton() {
+        createChainButton();
+        if (GM_getValue('qaChainEnabled', true) && GM_getValue('ffApiKey', '')) fetchChainTargets(false);
+    }
+    // ---------- end chain button ----------
+
+    function scan() {
+        const currentUrl = window.location.href;
+
+        if (currentUrl.includes("factionWarfare")) {
+            document.body.classList.add("qa-warfare");
+            return;
+        } else {
+            document.body.classList.remove("qa-warfare");
+        }
+
+        if (isExcludedHofPage(currentUrl)) {
+            document.body.classList.add("qa-hof-faction");
+            document.querySelectorAll('a[href*="factions.php"], img[src*="factiontags"], img[src*="factions"]').forEach(el => {
+                if (el.style.display === 'none') el.style.display = '';
+            });
+            document.querySelectorAll('.TDup_GhostOverlay').forEach(el => el.remove());
+            injectMiniProfileStats();
+            return;
+        } else {
+            document.body.classList.remove("qa-hof-faction");
+        }
+
+        if (currentUrl.includes("tab=crimes")) {
+            return;
+        }
+
+        if (currentUrl.includes("sid=attackLog")) {
+            document.body.classList.add("qa-attack-log");
+        } else {
+            document.body.classList.remove("qa-attack-log");
+        }
+
+        if (currentUrl.includes("forums.php")) {
+            document.body.classList.add("qa-forum");
+        } else {
+            document.body.classList.remove("qa-forum");
+        }
+
+        hideFactionLogos();
+        hideRankedWarScoreColumn();
+          hideRankedWarScoreColumn();
+  updateWarRespectColumn();
+        injectMiniProfileStats();
+
+        if (currentUrl.includes("profiles.php")) {
+            injectProfileSettingsPanel();
+            injectFlightStats();
+            injectProfileStats();
+        }
+
+        if (currentUrl.includes("factions.php") || currentUrl.includes("war.php")) {
+            injectFilterBox();
+        }
+
+        if (currentUrl.includes("forums.php")) {
+            processForumPage();
+        }
+
+        const isPageActive = PAGE_CONFIG.some(
+            config => config.check(currentUrl) && getSetting(config.key)
+        );
+
+        if (isPageActive && !currentUrl.includes("tab=crimes") && !currentUrl.includes("factionWarfare") && !isExcludedHofPage(currentUrl)) {
+            document.querySelectorAll(
+                'a[href*="profiles.php?XID="], a[href*="bazaar.php?userId="], .bazaar-player-link, .bazaar-trader-name, .bazaar-stat-link'
+            ).forEach(link => {
+                if (link.closest(CHAT_AND_NAV_IGNORE_SELECTOR) || link.closest('#mini-profile-root, [class*="mini-profile"], [class*="miniProfile"]')) {
+                    return;
+                }
+
+                const xid = getPlayerIdFromLink(link);
+                if (xid) {
+                    if (link.classList.contains('bazaar-player-link') ||
+                        link.classList.contains('bazaar-trader-name') ||
+                        link.classList.contains('bazaar-stat-link') ||
+                        link.closest('.bazaar-info-container, .bazaar-listing-card')) {
+
+                        injectBazaarBadge(link, xid);
+                    } else {
+                        injectGridBadge(link, xid);
+                    }
+                }
+            });
+        }
+
+        // Apply Gauges to Honor Bars if enabled in settings
+        document.querySelectorAll('.honor-text-wrap').forEach(bar => {
+            if (bar.dataset.qaHonorAttached) return;
+
+            let xid = null;
+            if (currentUrl.includes("profiles.php?XID=")) {
+                xid = new URL(currentUrl).searchParams.get("XID");
+            }
+
+            if (!xid) {
+                const container = bar.closest('li, tr, .user-wrap, [class*="userInfoBox"], .bazaar-info-container, .info-wrap, .poster, .post');
+                if (container) {
+                    const link = container.querySelector('a[href*="profiles.php?XID="], a[href*="userID="]');
+                    xid = getPlayerIdFromLink(link);
+                }
+            }
+
+            if (xid) {
+                bar.classList.add(`qa-honor-${xid}`);
+                bar.dataset.qaHonorAttached = "true";
+
+                if (statCache[xid] && statCache[xid].ffValue != null && getSetting('qaEnableGauges', false)) {
+                    applyGauge(bar, statCache[xid].ffValue);
+                } else {
+                    scheduleFetch(xid);
+                }
+            }
+        });
+    }
+
+    let scanTimeout = null;
+    function debouncedScan() {
+        if (scanTimeout) return;
+        scanTimeout = setTimeout(() => {
+            scan();
+            scanTimeout = null;
+        }, 100);
+    }
+
+    new MutationObserver(debouncedScan).observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+
+    window.addEventListener('hashchange', scan);
+
+    scan();
+    startChainButton();
+
+})();
